@@ -1,0 +1,34 @@
+{{define "repo.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gocov — {{.Repo.Slug}}</title>
+{{template "style"}}
+</head>
+<body>
+<header><a href="/">gocov</a> / {{.Repo.Slug}}</header>
+<main>
+<h1>{{.Repo.Slug}}</h1>
+<p><img src="/badge/{{.Repo.Slug}}.svg" alt="coverage badge"></p>
+{{if .Uploads}}
+<table>
+<thead><tr><th>Commit</th><th>Branch</th><th>PR</th><th class="num">Coverage</th><th class="num">Statements</th><th>Uploaded</th></tr></thead>
+<tbody>
+{{range .Uploads}}
+<tr>
+<td><a href="/uploads/{{.ID}}"><code>{{short .CommitSHA}}</code></a></td>
+<td>{{.Branch}}</td>
+<td>{{if .PRID}}#{{.PRID}}{{end}}</td>
+<td class="num">{{pct .TotalPct}}</td>
+<td class="num">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td>{{.CreatedAt.Format "2006-01-02 15:04 MST"}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="empty">No uploads yet.</p>
+{{end}}
+</main>
+</body>
+</html>{{end}}

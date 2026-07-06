@@ -1,0 +1,12 @@
+# gocov dogfoods itself: every build uploads its own coverage to a gocov
+# instance. Set GOCOV_SERVER and GOCOV_TOKEN as repository variables.
+image: golang:1.26
+
+pipelines:
+  default:
+    - step:
+        name: Test and upload coverage
+        script:
+          - go vet ./...
+          - go test ./... -covermode=atomic -coverprofile=coverage.out
+          - go run ./cmd/gocov upload coverage.out

@@ -1,0 +1,34 @@
+{{define "upload.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gocov — {{.Repo.Slug}} @ {{short .Upload.CommitSHA}}</title>
+{{template "style"}}
+</head>
+<body>
+<header><a href="/">gocov</a> / <a href="/repos/{{.Repo.Slug}}">{{.Repo.Slug}}</a> / <code>{{short .Upload.CommitSHA}}</code></header>
+<main>
+<h1>{{pct .Upload.TotalPct}} <small>({{.Upload.CoveredStmts}}/{{.Upload.TotalStmts}} statements)</small></h1>
+<p>
+Branch <strong>{{.Upload.Branch}}</strong>{{if .Upload.PRID}}, PR #{{.Upload.PRID}}{{end}},
+uploaded {{.Upload.CreatedAt.Format "2006-01-02 15:04 MST"}}
+</p>
+{{if .Files}}
+<table>
+<thead><tr><th>File</th><th class="num">Coverage</th><th class="num">Statements</th></tr></thead>
+<tbody>
+{{range .Files}}
+<tr>
+<td><code>{{.Path}}</code></td>
+<td class="num">{{pct .Pct}}</td>
+<td class="num">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="empty">No per-file data.</p>
+{{end}}
+</main>
+</body>
+</html>{{end}}

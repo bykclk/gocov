@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gocov
+      POSTGRES_PASSWORD: gocov
+      POSTGRES_DB: gocov
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gocov -d gocov"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+  server:
+    build: .
+    environment:
+      DATABASE_URL: postgres://gocov:gocov@db:5432/gocov
+      GOCOV_ADDR: ":8080"
+      GOCOV_BASE_URL: "http://localhost:8080"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -1,0 +1,30 @@
+{{define "index.html"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>gocov — repositories</title>
+{{template "style"}}
+</head>
+<body>
+<header><a href="/">gocov</a></header>
+<main>
+<h1>Repositories</h1>
+{{if .Repos}}
+<table>
+<thead><tr><th>Repository</th><th>Default branch</th><th class="num">Coverage</th></tr></thead>
+<tbody>
+{{range .Repos}}
+<tr>
+<td><a href="/repos/{{.Repo.Slug}}">{{.Repo.Slug}}</a></td>
+<td>{{.Repo.DefaultBranch}}</td>
+<td class="num">{{if .Latest}}{{pct .Latest.TotalPct}}{{else}}—{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p class="empty">No repositories yet. Add one with <code>gocov-server repo add -slug workspace/repo</code>.</p>
+{{end}}
+</main>
+</body>
+</html>{{end}}

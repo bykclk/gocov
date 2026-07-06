@@ -1,0 +1,4 @@
+/gocov
+/gocov-server
+coverage.out
+*.test
