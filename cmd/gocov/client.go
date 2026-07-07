@@ -16,6 +16,7 @@ type uploadRequest struct {
 	Server      string
 	Token       string
 	Format      string
+	PathPrefix  string
 	ProfilePath string
 	Build       buildInfo
 }
@@ -28,6 +29,12 @@ type uploadResponse struct {
 	TotalStmts   int64    `json:"total_stmts"`
 	DeltaPct     *float64 `json:"delta_pct"`
 	BuildStatus  string   `json:"build_status"`
+
+	DiffPct          *float64 `json:"diff_pct"`
+	DiffCoveredLines *int64   `json:"diff_covered_lines"`
+	DiffTotalLines   *int64   `json:"diff_total_lines"`
+	DiffStatus       string   `json:"diff_status"`
+	PRComment        string   `json:"pr_comment"`
 }
 
 func upload(req uploadRequest) (*uploadResponse, error) {
@@ -39,11 +46,12 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fields := map[string]string{
-		"repo":   req.Build.Repo,
-		"commit": req.Build.Commit,
-		"branch": req.Build.Branch,
-		"pr_id":  req.Build.PRID,
-		"format": req.Format,
+		"repo":        req.Build.Repo,
+		"commit":      req.Build.Commit,
+		"branch":      req.Build.Branch,
+		"pr_id":       req.Build.PRID,
+		"format":      req.Format,
+		"path_prefix": req.PathPrefix,
 	}
 	for k, v := range fields {
 		if v == "" {

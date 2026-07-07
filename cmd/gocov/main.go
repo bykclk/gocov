@@ -33,6 +33,7 @@ func run(args []string) error {
 	branch := fs.String("branch", "", "branch name (default: auto-detect)")
 	pr := fs.String("pr", "", "pull request id (default: auto-detect)")
 	format := fs.String("format", "go", "coverage profile format")
+	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -53,11 +54,16 @@ func run(args []string) error {
 	if build.Commit == "" {
 		return fmt.Errorf("could not detect commit SHA: pass -commit")
 	}
+	prefix := *pathPrefix
+	if prefix == "" && *format == "go" {
+		prefix = moduleFromGoMod("go.mod")
+	}
 
 	resp, err := upload(uploadRequest{
 		Server:      *server,
 		Token:       *token,
 		Format:      *format,
+		PathPrefix:  prefix,
 		ProfilePath: profilePath,
 		Build:       build,
 	})
@@ -69,7 +75,17 @@ func run(args []string) error {
 	if resp.DeltaPct != nil {
 		fmt.Printf(", delta %+.1f%%", *resp.DeltaPct)
 	}
-	fmt.Printf("\nbuild status: %s\n", resp.BuildStatus)
+	fmt.Println()
+	if resp.DiffPct != nil && resp.DiffCoveredLines != nil && resp.DiffTotalLines != nil {
+		fmt.Printf("diff coverage: %.1f%% (%d/%d changed lines)\n",
+			*resp.DiffPct, *resp.DiffCoveredLines, *resp.DiffTotalLines)
+	} else if resp.DiffStatus != "" {
+		fmt.Printf("diff coverage: %s\n", resp.DiffStatus)
+	}
+	fmt.Printf("build status: %s\n", resp.BuildStatus)
+	if resp.PRComment != "" {
+		fmt.Printf("pr comment: %s\n", resp.PRComment)
+	}
 	return nil
 }
 

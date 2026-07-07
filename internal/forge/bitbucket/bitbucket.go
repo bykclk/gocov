@@ -77,10 +77,40 @@ func (c *Client) PostPRComment(ctx context.Context, repoSlug, prID, body string)
 	return c.post(ctx, path, payload)
 }
 
-// GetPRDiff is reserved for the diff-coverage engine.
+// GetPRDiff fetches the unified diff of a pull request via
+// GET /repositories/{slug}/pullrequests/{id}/diff. Bitbucket answers with a
+// redirect to the diff blob, which the HTTP client follows transparently.
 func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error) {
-	return "", forge.ErrNotImplemented
+	path := fmt.Sprintf("/repositories/%s/pullrequests/%s/diff",
+		repoSlug, url.PathEscape(prID))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(c.Username, c.AppPassword)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("bitbucket: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("bitbucket: %s returned %d: %s", path, resp.StatusCode, msg)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxDiffBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("bitbucket: reading diff: %w", err)
+	}
+	if len(body) > maxDiffBytes {
+		// A truncated diff would silently produce wrong coverage numbers.
+		return "", fmt.Errorf("bitbucket: PR diff larger than %d MiB", maxDiffBytes>>20)
+	}
+	return string(body), nil
 }
+
+// maxDiffBytes bounds PR diffs; larger diffs error instead of truncating.
+const maxDiffBytes = 32 << 20
 
 func (c *Client) post(ctx context.Context, path string, payload any) error {
 	data, err := json.Marshal(payload)

@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -93,6 +95,37 @@ func TestSlugFromRemote(t *testing.T) {
 		if got := slugFromRemote(tt.remote); got != tt.want {
 			t.Errorf("slugFromRemote(%q) = %q, want %q", tt.remote, got, tt.want)
 		}
+	}
+}
+
+func TestModuleFromGoMod(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"simple", write("a.mod", "module github.com/x/y\n\ngo 1.26\n"), "github.com/x/y"},
+		{"comment then module", write("b.mod", "// hi\nmodule example.com/m\n"), "example.com/m"},
+		{"quoted", write("c.mod", `module "example.com/q"`+"\n"), "example.com/q"},
+		{"missing file", filepath.Join(dir, "nope.mod"), ""},
+		{"no module line", write("d.mod", "go 1.26\n"), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := moduleFromGoMod(tt.path); got != tt.want {
+				t.Errorf("moduleFromGoMod() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

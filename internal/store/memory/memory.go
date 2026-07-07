@@ -112,8 +112,8 @@ func (s *Store) CreateUpload(_ context.Context, u *store.Upload, files []*store.
 	if u.CreatedAt.IsZero() {
 		u.CreatedAt = time.Now()
 	}
-	cp := *u
-	s.uploads[u.ID] = &cp
+	cp := copyUpload(u)
+	s.uploads[u.ID] = cp
 	fs := make([]*store.UploadFile, 0, len(files))
 	for _, f := range files {
 		fcp := *f
@@ -132,8 +132,15 @@ func (s *Store) Upload(_ context.Context, id int64) (*store.Upload, error) {
 	if !ok {
 		return nil, store.ErrNotFound
 	}
+	return copyUpload(u), nil
+}
+
+// copyUpload deep-copies an upload so callers and the store never alias the
+// same DiffCoverage, matching the postgres JSON round-trip semantics.
+func copyUpload(u *store.Upload) *store.Upload {
 	cp := *u
-	return &cp, nil
+	cp.DiffCoverage = u.DiffCoverage.Clone()
+	return &cp
 }
 
 func (s *Store) ListUploads(_ context.Context, repoID int64, limit int) ([]*store.Upload, error) {
@@ -142,8 +149,7 @@ func (s *Store) ListUploads(_ context.Context, repoID int64, limit int) ([]*stor
 	var out []*store.Upload
 	for _, u := range s.uploads {
 		if u.RepoID == repoID {
-			cp := *u
-			out = append(out, &cp)
+			out = append(out, copyUpload(u))
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
@@ -182,6 +188,5 @@ func (s *Store) LatestUpload(_ context.Context, repoID int64, branch string) (*s
 	if latest == nil {
 		return nil, store.ErrNotFound
 	}
-	cp := *latest
-	return &cp, nil
+	return copyUpload(latest), nil
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -80,4 +81,25 @@ func runGit(args ...string) (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// moduleFromGoMod reads the module path from a go.mod file, so the server
+// can map module-qualified profile paths to repo-relative diff paths.
+// Returns "" when the file is missing or has no module directive.
+func moduleFromGoMod(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if rest, ok := strings.CutPrefix(line, "module"); ok {
+			rest = strings.TrimSpace(rest)
+			if rest == "" {
+				continue
+			}
+			return strings.Trim(rest, `"`)
+		}
+	}
+	return ""
 }

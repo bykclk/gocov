@@ -13,6 +13,27 @@
 Branch <strong>{{.Upload.Branch}}</strong>{{if .Upload.PRID}}, PR #{{.Upload.PRID}}{{end}},
 uploaded {{.Upload.CreatedAt.Format "2006-01-02 15:04 MST"}}
 </p>
+{{with .Upload.DiffCoverage}}
+<h2>Diff coverage: {{if .TotalLines}}{{pct .Percent}} <small>({{.CoveredLines}}/{{.TotalLines}} changed lines)</small>{{else}}no executable lines changed{{end}}</h2>
+{{if .Files}}
+<table>
+<thead><tr><th>Changed file</th><th class="num">Coverage</th><th>Uncovered lines</th></tr></thead>
+<tbody>
+{{range .Files}}
+<tr>
+<td><code>{{.Path}}</code></td>
+<td class="num">{{.CoveredLines}}/{{.TotalLines}}</td>
+<td>{{ranges .UncoveredLines}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{end}}
+{{if .UnmatchedFiles}}
+<p class="empty">Changed files without coverage data:
+{{range $i, $p := .UnmatchedFiles}}{{if $i}}, {{end}}<code>{{$p}}</code>{{end}}</p>
+{{end}}
+{{end}}
 {{if .Files}}
 <table>
 <thead><tr><th>File</th><th class="num">Coverage</th><th class="num">Statements</th></tr></thead>

@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"github.com/bykclk/gocov/internal/blobstore"
+	"github.com/bykclk/gocov/internal/diffcov"
 	"github.com/bykclk/gocov/internal/forge"
 	"github.com/bykclk/gocov/internal/profile"
 	"github.com/bykclk/gocov/internal/store"
@@ -54,6 +55,7 @@ func New(cfg Config) *Server {
 			}
 			return sha
 		},
+		"ranges": diffcov.Ranges,
 	}
 	tmpl := template.Must(template.New("").Funcs(funcs).ParseFS(templatesFS, "templates/*.html"))
 

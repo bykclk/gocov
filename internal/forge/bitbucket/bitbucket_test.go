@@ -3,7 +3,6 @@ package bitbucket
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -85,11 +84,35 @@ func TestPostPRComment(t *testing.T) {
 	}
 }
 
-func TestGetPRDiffNotImplemented(t *testing.T) {
-	c := &Client{}
-	_, err := c.GetPRDiff(context.Background(), "a/b", "1")
-	if !errors.Is(err, forge.ErrNotImplemented) {
-		t.Errorf("err = %v, want ErrNotImplemented", err)
+func TestGetPRDiff(t *testing.T) {
+	const diff = "--- a/a.go\n+++ b/a.go\n@@ -1 +1,2 @@\n x\n+y\n"
+	var gotPath, gotUser string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotUser, _, _ = r.BasicAuth()
+		_, _ = w.Write([]byte(diff))
+	})
+	got, err := c.GetPRDiff(context.Background(), "acme/widgets", "42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != diff {
+		t.Errorf("diff = %q", got)
+	}
+	if gotPath != "/repositories/acme/widgets/pullrequests/42/diff" {
+		t.Errorf("path = %q", gotPath)
+	}
+	if gotUser != "user" {
+		t.Errorf("basic auth user = %q", gotUser)
+	}
+}
+
+func TestGetPRDiffHTTPError(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+	if _, err := c.GetPRDiff(context.Background(), "a/b", "1"); err == nil {
+		t.Error("want error on 404")
 	}
 }
 

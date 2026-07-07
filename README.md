@@ -15,6 +15,9 @@ is the first supported forge.
   variables and falls back to git
 - Pushes a `coverage: X% (±Y%)` build status to Bitbucket commits when
   the repo has an app password configured
+- Diff coverage for pull requests: fetches the PR diff from Bitbucket,
+  intersects changed lines with coverage blocks, and posts a PR comment
+  listing uncovered changed lines
 
 The architecture is deliberately extensible: coverage formats sit behind
 `profile.Parser`, forges behind `forge.Forge`, raw profile storage behind
@@ -91,9 +94,12 @@ the repo's default branch.
 | `branch`  | defaults to the repo's default branch          |
 | `pr_id`   | optional pull request id                       |
 | `format`  | profile format, default `go`                   |
+| `path_prefix` | maps profile paths to repo paths for diff coverage, e.g. the Go module path (the CLI fills it from go.mod) |
 
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,
-delta_pct, build_status}`.
+delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
+`diff_pct`, `diff_covered_lines`, `diff_total_lines`, `diff_status` and
+`pr_comment` when the repo has forge credentials configured.
 
 ## Configuration
 

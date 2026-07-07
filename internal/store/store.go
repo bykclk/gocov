@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/bykclk/gocov/internal/diffcov"
 	"github.com/bykclk/gocov/internal/profile"
 )
 
@@ -38,6 +39,9 @@ type Upload struct {
 	CoveredStmts int64
 	TotalStmts   int64
 	RawBlobKey   string // blobstore key of the raw profile
+	// DiffCoverage is set for PR uploads when the PR diff could be
+	// fetched from the forge; nil otherwise.
+	DiffCoverage *diffcov.Result
 	CreatedAt    time.Time
 }
 

@@ -189,13 +189,19 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
 
+	var diffCov []byte
+	if u.DiffCoverage != nil {
+		if diffCov, err = json.Marshal(u.DiffCoverage); err != nil {
+			return err
+		}
+	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO uploads (repo_id, commit_sha, branch, pr_id, format,
-			total_pct, covered_stmts, total_stmts, raw_blob_key)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at`,
 		u.RepoID, u.CommitSHA, u.Branch, u.PRID, u.Format,
-		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey,
+		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		return err
@@ -219,7 +225,7 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 }
 
 const uploadCols = `id, repo_id, commit_sha, branch, pr_id, format,
-	total_pct, covered_stmts, total_stmts, raw_blob_key, created_at`
+	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, created_at`
 
 func (s *Store) Upload(ctx context.Context, id int64) (*store.Upload, error) {
 	return s.scanUpload(s.pool.QueryRow(ctx,
@@ -257,13 +263,19 @@ func (s *Store) LatestUpload(ctx context.Context, repoID int64, branch string) (
 
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 	var u store.Upload
+	var diffCov []byte
 	err := row.Scan(&u.ID, &u.RepoID, &u.CommitSHA, &u.Branch, &u.PRID, &u.Format,
-		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &u.CreatedAt)
+		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if len(diffCov) > 0 {
+		if err := json.Unmarshal(diffCov, &u.DiffCoverage); err != nil {
+			return nil, fmt.Errorf("upload %d: bad diff_coverage: %w", u.ID, err)
+		}
 	}
 	return &u, nil
 }

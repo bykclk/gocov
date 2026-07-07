@@ -26,11 +26,20 @@ type CommentCall struct {
 type Forge struct {
 	mu sync.Mutex
 
-	StatusErr  error // returned by PostBuildStatus
-	CommentErr error // returned by PostPRComment
+	StatusErr  error  // returned by PostBuildStatus
+	CommentErr error  // returned by PostPRComment
+	DiffText   string // returned by GetPRDiff; empty means ErrNotImplemented
+	DiffErr    error  // returned by GetPRDiff when set
 
 	StatusCalls  []StatusCall
 	CommentCalls []CommentCall
+	DiffCalls    []DiffCall
+}
+
+// DiffCall records one GetPRDiff invocation.
+type DiffCall struct {
+	RepoSlug string
+	PRID     string
 }
 
 // New returns an empty fake forge.
@@ -64,8 +73,17 @@ func (f *Forge) PostPRComment(_ context.Context, repoSlug, prID, body string) er
 	return nil
 }
 
-func (f *Forge) GetPRDiff(context.Context, string, string) (string, error) {
-	return "", forge.ErrNotImplemented
+func (f *Forge) GetPRDiff(_ context.Context, repoSlug, prID string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.DiffCalls = append(f.DiffCalls, DiffCall{repoSlug, prID})
+	if f.DiffErr != nil {
+		return "", f.DiffErr
+	}
+	if f.DiffText == "" {
+		return "", forge.ErrNotImplemented
+	}
+	return f.DiffText, nil
 }
 
 var _ forge.Forge = (*Forge)(nil)

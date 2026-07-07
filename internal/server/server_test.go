@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -263,6 +264,170 @@ func TestUploadWithoutForgeCredentialsSkipsStatus(t *testing.T) {
 		t.Errorf("forge was called despite missing credentials")
 	}
 }
+
+// testPRDiff touches a.go: adds covered lines 2-3 (block 1.1,5.2 count 1),
+// uncovered line 8 (block 7.1,9.2 count 0), non-executable line 20,
+// plus an unmatched Go file and a doc file.
+const testPRDiff = `diff --git a/m/a.go b/m/a.go
+--- a/m/a.go
++++ b/m/a.go
+@@ -1,3 +1,5 @@
+ ctx
++added 2
++added 3
+ ctx
+ ctx
+@@ -7,2 +8,3 @@
+ ctx
++added line 9
+ ctx
+diff --git a/m/untested.go b/m/untested.go
+--- /dev/null
++++ b/m/untested.go
+@@ -0,0 +1,2 @@
++l1
++l2
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1 +1,2 @@
+ x
++docs
+`
+
+func TestUploadDiffCoverage(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	f.forge.DiffText = testPRDiff
+
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "prcommit1", "branch": "feature/x", "pr_id": "42",
+	}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.DiffStatus != "computed" {
+		t.Fatalf("diff_status = %q, body = %s", resp.DiffStatus, rec.Body)
+	}
+	// a.go: lines 2,3 covered; line 9 ("added 8 wait no" lands on line 9,
+	// inside the uncovered 7-9 block). untested.go has no profile entry.
+	if resp.DiffTotalLines == nil || *resp.DiffTotalLines != 3 ||
+		resp.DiffCoveredLines == nil || *resp.DiffCoveredLines != 2 {
+		t.Fatalf("diff lines = %v/%v, want 2/3; body = %s",
+			resp.DiffCoveredLines, resp.DiffTotalLines, rec.Body)
+	}
+	if resp.PRComment != "posted" {
+		t.Errorf("pr_comment = %q", resp.PRComment)
+	}
+
+	// The diff was requested for the right PR.
+	if len(f.forge.DiffCalls) != 1 || f.forge.DiffCalls[0].PRID != "42" {
+		t.Errorf("diff calls = %+v", f.forge.DiffCalls)
+	}
+
+	// Stored upload round-trips the result.
+	u, err := f.store.Upload(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.DiffCoverage == nil || u.DiffCoverage.TotalLines != 3 {
+		t.Fatalf("stored diff coverage = %+v", u.DiffCoverage)
+	}
+	if len(u.DiffCoverage.UnmatchedFiles) != 1 || u.DiffCoverage.UnmatchedFiles[0] != "m/untested.go" {
+		t.Errorf("unmatched = %v, want [m/untested.go] (README.md filtered out)",
+			u.DiffCoverage.UnmatchedFiles)
+	}
+
+	// PR comment content.
+	if len(f.forge.CommentCalls) != 1 {
+		t.Fatalf("comment calls = %d, want 1", len(f.forge.CommentCalls))
+	}
+	body := f.forge.CommentCalls[0].Body
+	for _, want := range []string{
+		"66.7%",         // diff pct 2/3
+		"2/3",           // covered/total
+		"m/a.go",        // uncovered file listed
+		"m/untested.go", // unmatched file listed
+		"/uploads/",     // report link
+		"80.0%",         // total coverage
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comment missing %q:\n%s", want, body)
+		}
+	}
+	if f.forge.CommentCalls[0].PRID != "42" {
+		t.Errorf("comment PR = %q", f.forge.CommentCalls[0].PRID)
+	}
+}
+
+func TestUploadDiffCoverageErrorPaths(t *testing.T) {
+	t.Run("no credentials", func(t *testing.T) {
+		f := newFixture(t, nil)
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c", "pr_id": "1"}, testProfile)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != http.StatusCreated || !strings.HasPrefix(resp.DiffStatus, "skipped") {
+			t.Errorf("code=%d diff_status=%q", rec.Code, resp.DiffStatus)
+		}
+		if resp.PRComment != "skipped" {
+			t.Errorf("pr_comment = %q", resp.PRComment)
+		}
+	})
+
+	t.Run("forge diff not implemented", func(t *testing.T) {
+		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+		// fake forge with empty DiffText returns ErrNotImplemented
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c", "pr_id": "1"}, testProfile)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != http.StatusCreated || resp.DiffStatus != "skipped: diff not supported by forge" {
+			t.Errorf("code=%d diff_status=%q", rec.Code, resp.DiffStatus)
+		}
+		// Comment still posted with total coverage only.
+		if resp.PRComment != "posted" {
+			t.Errorf("pr_comment = %q", resp.PRComment)
+		}
+	})
+
+	t.Run("diff fetch error does not fail upload", func(t *testing.T) {
+		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+		f.forge.DiffErr = errFake
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c", "pr_id": "1"}, testProfile)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Code != http.StatusCreated || !strings.HasPrefix(resp.DiffStatus, "error:") {
+			t.Errorf("code=%d diff_status=%q", rec.Code, resp.DiffStatus)
+		}
+	})
+
+	t.Run("non-PR upload has no diff fields", func(t *testing.T) {
+		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+		f.forge.DiffText = testPRDiff
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c"}, testProfile)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.DiffStatus != "" || resp.DiffPct != nil || resp.PRComment != "" {
+			t.Errorf("non-PR upload leaked diff fields: %s", rec.Body)
+		}
+		if len(f.forge.DiffCalls) != 0 {
+			t.Errorf("diff fetched for non-PR upload")
+		}
+	})
+}
+
+var errFake = errors.New("fake forge failure")
 
 func TestBadge(t *testing.T) {
 	tests := []struct {
