@@ -21,6 +21,11 @@ services:
       GOCOV_BASE_URL: "http://localhost:8080"
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
     depends_on:
       db:
         condition: service_healthy

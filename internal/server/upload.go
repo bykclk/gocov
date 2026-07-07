@@ -157,6 +157,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	if err := s.store.CreateUpload(r.Context(), upload, files); err != nil {
+		// The raw profile was already written; don't leave it orphaned.
+		if delErr := s.blobs.Delete(r.Context(), blobKey); delErr != nil {
+			s.log.Error("cleaning up blob after failed upload", "key", blobKey, "err", delErr)
+		}
 		s.internalError(w, "saving upload", err)
 		return
 	}

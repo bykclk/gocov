@@ -57,6 +57,22 @@ func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
 	return nil
 }
 
+func (s *Store) DeleteRepo(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.repos[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(s.repos, id)
+	for uid, u := range s.uploads {
+		if u.RepoID == id {
+			delete(s.uploads, uid)
+			delete(s.files, uid)
+		}
+	}
+	return nil
+}
+
 func (s *Store) RepoByID(_ context.Context, id int64) (*store.Repo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

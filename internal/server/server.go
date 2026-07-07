@@ -2,11 +2,13 @@
 package server
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/bykclk/gocov/internal/blobstore"
 	"github.com/bykclk/gocov/internal/diffcov"
@@ -19,7 +21,7 @@ import (
 var templatesFS embed.FS
 
 // Config wires the server's dependencies. All fields are required except
-// Logger and BaseURL.
+// Logger, BaseURL and Health.
 type Config struct {
 	Store   store.Store
 	Blobs   blobstore.Store
@@ -27,6 +29,9 @@ type Config struct {
 	Forges  map[string]forge.Factory  // by forge name, e.g. "bitbucket"
 	BaseURL string                    // public URL of this server, for links in build statuses
 	Logger  *slog.Logger
+	// Health is probed by GET /healthz (e.g. a database ping).
+	// When nil, /healthz always reports healthy.
+	Health func(ctx context.Context) error
 }
 
 // Server is the gocov HTTP server.
@@ -39,6 +44,7 @@ type Server struct {
 	log     *slog.Logger
 	tmpl    *template.Template
 	mux     *http.ServeMux
+	health  func(ctx context.Context) error
 }
 
 // New builds a Server; panics only on programmer error (bad templates).
@@ -68,6 +74,7 @@ func New(cfg Config) *Server {
 		log:     log,
 		tmpl:    tmpl,
 		mux:     http.NewServeMux(),
+		health:  cfg.Health,
 	}
 	s.routes()
 	return s
@@ -76,9 +83,26 @@ func New(cfg Config) *Server {
 func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.handleUpload)
 	s.mux.HandleFunc("GET /badge/{slug...}", s.handleBadge)
+	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
+}
+
+// handleHealthz reports readiness: 200 when the health probe (typically a
+// database ping) succeeds, 503 otherwise.
+func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if s.health != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.health(ctx); err != nil {
+			s.log.Error("health check", "err", err)
+			http.Error(w, "unhealthy", http.StatusServiceUnavailable)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte("ok\n"))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

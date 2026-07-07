@@ -429,6 +429,39 @@ func TestUploadDiffCoverageErrorPaths(t *testing.T) {
 
 var errFake = errors.New("fake forge failure")
 
+func TestHealthz(t *testing.T) {
+	get := func(srv *Server) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		return rec
+	}
+	base := Config{
+		Store:   storemem.New(),
+		Blobs:   blobmem.New(),
+		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+	}
+
+	t.Run("no probe configured", func(t *testing.T) {
+		if rec := get(New(base)); rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", rec.Code)
+		}
+	})
+	t.Run("healthy probe", func(t *testing.T) {
+		cfg := base
+		cfg.Health = func(context.Context) error { return nil }
+		if rec := get(New(cfg)); rec.Code != http.StatusOK {
+			t.Errorf("status = %d, want 200", rec.Code)
+		}
+	})
+	t.Run("failing probe", func(t *testing.T) {
+		cfg := base
+		cfg.Health = func(context.Context) error { return errFake }
+		if rec := get(New(cfg)); rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want 503", rec.Code)
+		}
+	})
+}
+
 func TestBadge(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bykclk/gocov/internal/blobstore"
+	blobmem "github.com/bykclk/gocov/internal/blobstore/memory"
 	"github.com/bykclk/gocov/internal/store"
 	storemem "github.com/bykclk/gocov/internal/store/memory"
 )
@@ -16,8 +18,13 @@ var tokenRe = regexp.MustCompile(`upload token: ([0-9a-f]{48})`)
 
 func runRepoCmd(t *testing.T, st store.Store, args ...string) (string, error) {
 	t.Helper()
+	return runRepoCmdBlobs(t, st, blobmem.New(), args...)
+}
+
+func runRepoCmdBlobs(t *testing.T, st store.Store, blobs blobstore.Store, args ...string) (string, error) {
+	t.Helper()
 	var out bytes.Buffer
-	err := repoCmd(context.Background(), st, args, &out)
+	err := repoCmd(context.Background(), st, blobs, args, &out)
 	return out.String(), err
 }
 
@@ -230,6 +237,84 @@ func TestRepoUpdateValidation(t *testing.T) {
 				t.Error("want error")
 			}
 		})
+	}
+}
+
+func TestRepoRemove(t *testing.T) {
+	ctx := context.Background()
+	st := storemem.New()
+	blobs := blobmem.New()
+	mustAdd(t, st, "-slug", "acme/widgets")
+	repo, err := st.RepoBySlug(ctx, "acme/widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := blobs.Put(ctx, "profiles/1/raw", []byte("mode: set\n")); err != nil {
+		t.Fatal(err)
+	}
+	err = st.CreateUpload(ctx, &store.Upload{
+		RepoID: repo.ID, CommitSHA: "c1", Branch: "main", Format: "go", RawBlobKey: "profiles/1/raw",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Without -force: dry run only.
+	out, err := runRepoCmdBlobs(t, st, blobs, "remove", "-slug", "acme/widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "would remove") || !strings.Contains(out, "1 upload") {
+		t.Errorf("dry run output: %q", out)
+	}
+	if _, err := st.RepoBySlug(ctx, "acme/widgets"); err != nil {
+		t.Fatal("dry run must not delete the repo")
+	}
+
+	// With -force: repo, uploads and blobs all gone.
+	out, err = runRepoCmdBlobs(t, st, blobs, "remove", "-slug", "acme/widgets", "-force")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "removed") {
+		t.Errorf("output: %q", out)
+	}
+	if _, err := st.RepoBySlug(ctx, "acme/widgets"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("repo still exists")
+	}
+	if _, err := st.Upload(ctx, 1); !errors.Is(err, store.ErrNotFound) {
+		t.Error("upload still exists")
+	}
+	if _, err := blobs.Get(ctx, "profiles/1/raw"); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Error("raw profile blob still exists")
+	}
+}
+
+func TestRepoRemoveValidation(t *testing.T) {
+	st := storemem.New()
+	if _, err := runRepoCmd(t, st, "remove", "-force"); err == nil {
+		t.Error("want error without slug")
+	}
+	if _, err := runRepoCmd(t, st, "remove", "-slug", "no/such", "-force"); err == nil {
+		t.Error("want error for unknown slug")
+	}
+}
+
+func TestRepoCmdRejectsStrayArguments(t *testing.T) {
+	// flag parsing stops at the first positional; a trailing -force would be
+	// silently ignored and the dry run would exit 0. That must be an error.
+	ctx := context.Background()
+	st := storemem.New()
+	mustAdd(t, st, "-slug", "acme/widgets")
+
+	if _, err := runRepoCmd(t, st, "remove", "-slug", "acme/widgets", "stray", "-force"); err == nil {
+		t.Fatal("want error for stray positional argument")
+	}
+	if _, err := st.RepoBySlug(ctx, "acme/widgets"); err != nil {
+		t.Error("repo must be untouched")
+	}
+	if _, err := runRepoCmd(t, st, "list", "stray"); err == nil {
+		t.Error("list must reject positional arguments too")
 	}
 }
 

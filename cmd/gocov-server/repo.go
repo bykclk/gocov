@@ -10,6 +10,7 @@ import (
 	"io"
 	"text/tabwriter"
 
+	"github.com/bykclk/gocov/internal/blobstore"
 	"github.com/bykclk/gocov/internal/store"
 )
 
@@ -25,11 +26,12 @@ commands:
   list          list registered repos
   rotate-token  generate a new upload token (the old one stops working)
   update        change default branch or forge credentials
+  remove        delete a repo with all its uploads (requires -force)
 `
 
-// repoCmd dispatches the repo admin subcommands. It takes the store and
-// output writer so tests can run it against the in-memory store.
-func repoCmd(ctx context.Context, st store.Store, args []string, out io.Writer) error {
+// repoCmd dispatches the repo admin subcommands. It takes the stores and
+// output writer so tests can run it against the in-memory implementations.
+func repoCmd(ctx context.Context, st store.Store, blobs blobstore.Store, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("%s", repoUsage)
 	}
@@ -42,6 +44,8 @@ func repoCmd(ctx context.Context, st store.Store, args []string, out io.Writer) 
 		return repoRotateToken(ctx, st, args[1:], out)
 	case "update":
 		return repoUpdate(ctx, st, args[1:], out)
+	case "remove":
+		return repoRemove(ctx, st, blobs, args[1:], out)
 	default:
 		return fmt.Errorf("unknown repo command %q\n%s", args[0], repoUsage)
 	}
@@ -56,9 +60,15 @@ func newFlagSet(name string, out io.Writer) *flag.FlagSet {
 // parseFlags parses args. stop means the command must return immediately:
 // with a nil error for -h/-help (usage was shown), or with errPrinted for
 // parse errors (the flag package already reported them to the output).
+// Positional leftovers are rejected: flag parsing stops at the first
+// non-flag argument, so "remove -slug x stray -force" would otherwise
+// silently drop -force and dry-run with exit code 0.
 func parseFlags(fs *flag.FlagSet, args []string) (stop bool, err error) {
 	switch err := fs.Parse(args); {
 	case err == nil:
+		if fs.NArg() > 0 {
+			return true, fmt.Errorf("unexpected argument %q (flags must precede it)", fs.Arg(0))
+		}
 		return false, nil
 	case errors.Is(err, flag.ErrHelp):
 		return true, nil
@@ -216,5 +226,61 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 		return fmt.Errorf("updating repo %s: %w", *slug, err)
 	}
 	fmt.Fprintf(out, "repo %s updated\n", r.Slug)
+	return nil
+}
+
+func repoRemove(ctx context.Context, st store.Store, blobs blobstore.Store, args []string, out io.Writer) error {
+	fs := newFlagSet("repo remove", out)
+	slug := fs.String("slug", "", "repo slug (required)")
+	force := fs.Bool("force", false, "actually delete; without it only a summary is printed")
+	if stop, err := parseFlags(fs, args); stop {
+		return err
+	}
+	if *slug == "" {
+		return fmt.Errorf("-slug is required")
+	}
+	r, err := st.RepoBySlug(ctx, *slug)
+	if err != nil {
+		return fmt.Errorf("loading repo %s: %w", *slug, err)
+	}
+	// Uploads landing between this snapshot and DeleteRepo leave their
+	// blobs orphaned — a harmless, milliseconds-wide window; prefer
+	// removing repos while their CI is quiet.
+	uploads, err := st.ListUploads(ctx, r.ID, 0)
+	if err != nil {
+		return fmt.Errorf("listing uploads: %w", err)
+	}
+
+	if !*force {
+		fmt.Fprintf(out, "would remove repo %s with %d upload(s) and their raw profiles\n", r.Slug, len(uploads))
+		fmt.Fprintln(out, "re-run with -force to delete permanently")
+		return nil
+	}
+
+	// Blob keys must be collected before the upload rows disappear, but the
+	// blobs themselves are deleted after the repo: if DeleteRepo fails the
+	// repo stays fully intact, whereas a failed blob delete only leaves
+	// dead weight behind.
+	keys := make([]string, 0, len(uploads))
+	for _, u := range uploads {
+		if u.RawBlobKey != "" {
+			keys = append(keys, u.RawBlobKey)
+		}
+	}
+	if err := st.DeleteRepo(ctx, r.ID); err != nil {
+		return fmt.Errorf("deleting repo %s: %w", *slug, err)
+	}
+	blobErrs := 0
+	for _, key := range keys {
+		if err := blobs.Delete(ctx, key); err != nil {
+			blobErrs++
+			fmt.Fprintf(out, "warning: orphaned blob %s: %v\n", key, err)
+		}
+	}
+	fmt.Fprintf(out, "repo %s removed (%d uploads", r.Slug, len(uploads))
+	if blobErrs > 0 {
+		fmt.Fprintf(out, ", %d blob(s) could not be deleted", blobErrs)
+	}
+	fmt.Fprintln(out, ")")
 	return nil
 }

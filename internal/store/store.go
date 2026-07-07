@@ -61,6 +61,9 @@ type Store interface {
 	CreateRepo(ctx context.Context, r *Repo) error
 	// UpdateRepo replaces the stored row matching r.ID with r's fields.
 	UpdateRepo(ctx context.Context, r *Repo) error
+	// DeleteRepo removes a repo together with its uploads and per-file rows.
+	// Raw profile blobs are not touched; callers clean those up first.
+	DeleteRepo(ctx context.Context, id int64) error
 	RepoByID(ctx context.Context, id int64) (*Repo, error)
 	RepoBySlug(ctx context.Context, slug string) (*Repo, error)
 	RepoByToken(ctx context.Context, token string) (*Repo, error)
@@ -70,6 +73,7 @@ type Store interface {
 	// setting u.ID and u.CreatedAt.
 	CreateUpload(ctx context.Context, u *Upload, files []*UploadFile) error
 	Upload(ctx context.Context, id int64) (*Upload, error)
+	// ListUploads returns uploads newest first; limit <= 0 means all.
 	ListUploads(ctx context.Context, repoID int64, limit int) ([]*Upload, error)
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
 	// LatestUpload returns the most recent upload for a branch.

@@ -5,6 +5,7 @@
 //	gocov-server repo list
 //	gocov-server repo rotate-token -slug workspace/repo
 //	gocov-server repo update -slug workspace/repo [flags]
+//	gocov-server repo remove -slug workspace/repo -force
 //
 // Configuration via environment: DATABASE_URL (required),
 // GOCOV_ADDR (default :8080), GOCOV_BASE_URL (default http://localhost:8080).
@@ -17,6 +18,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -52,7 +55,7 @@ func run(args []string) error {
 			return err
 		}
 		defer st.Pool().Close()
-		return repoCmd(ctx, st, args[1:], os.Stdout)
+		return repoCmd(ctx, st, blobpg.New(st.Pool()), args[1:], os.Stdout)
 	default:
 		return fmt.Errorf("unknown command %q (want serve|repo)", args[0])
 	}
@@ -75,7 +78,8 @@ func connect(ctx context.Context) (*storepg.Store, error) {
 }
 
 func serve() error {
-	ctx := context.Background()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
 	st, err := connect(ctx)
@@ -94,6 +98,7 @@ func serve() error {
 		Forges:  map[string]forge.Factory{"bitbucket": bitbucket.Factory},
 		BaseURL: baseURL,
 		Logger:  log,
+		Health:  st.Pool().Ping,
 	})
 
 	httpSrv := &http.Server{
@@ -101,8 +106,27 @@ func serve() error {
 		Handler:           srv,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpSrv.ListenAndServe() }()
 	log.Info("listening", "addr", addr, "base_url", baseURL)
-	return httpSrv.ListenAndServe()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		// SIGINT/SIGTERM: finish in-flight requests, then exit cleanly.
+		// Releasing the signal handler first lets a second signal kill the
+		// process the default way if shutdown hangs.
+		stop()
+		log.Info("shutting down")
+		shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := httpSrv.Shutdown(shutCtx); err != nil {
+			return fmt.Errorf("shutdown: %w", err)
+		}
+		return nil
+	}
 }
 
 func envOr(key, fallback string) string {

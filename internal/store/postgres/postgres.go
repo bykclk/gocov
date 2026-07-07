@@ -121,6 +121,17 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 
 const repoCols = `id, forge, slug, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb), created_at`
 
+func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) RepoByID(ctx context.Context, id int64) (*store.Repo, error) {
 	return s.scanRepo(s.pool.QueryRow(ctx,
 		`SELECT `+repoCols+` FROM repos WHERE id = $1`, id))
@@ -233,12 +244,14 @@ func (s *Store) Upload(ctx context.Context, id int64) (*store.Upload, error) {
 }
 
 func (s *Store) ListUploads(ctx context.Context, repoID int64, limit int) ([]*store.Upload, error) {
-	if limit <= 0 {
-		limit = 100
+	// LIMIT NULL means no limit in Postgres.
+	var lim any
+	if limit > 0 {
+		lim = limit
 	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT `+uploadCols+` FROM uploads WHERE repo_id = $1 ORDER BY id DESC LIMIT $2`,
-		repoID, limit)
+		repoID, lim)
 	if err != nil {
 		return nil, err
 	}
