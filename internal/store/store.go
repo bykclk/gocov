@@ -55,6 +55,8 @@ type UploadFile struct {
 // Store is the persistence interface used by the server.
 type Store interface {
 	CreateRepo(ctx context.Context, r *Repo) error
+	// UpdateRepo replaces the stored row matching r.ID with r's fields.
+	UpdateRepo(ctx context.Context, r *Repo) error
 	RepoByID(ctx context.Context, id int64) (*Repo, error)
 	RepoBySlug(ctx context.Context, slug string) (*Repo, error)
 	RepoByToken(ctx context.Context, token string) (*Repo, error)

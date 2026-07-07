@@ -100,6 +100,25 @@ func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
+func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
+	creds, err := marshalCreds(r.ForgeCredentials)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE repos SET forge = $2, slug = $3, token = $4,
+			default_branch = $5, forge_credentials = $6
+		WHERE id = $1`,
+		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch, creds)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 const repoCols = `id, forge, slug, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb), created_at`
 
 func (s *Store) RepoByID(ctx context.Context, id int64) (*store.Repo, error) {

@@ -42,6 +42,21 @@ func (s *Store) CreateRepo(_ context.Context, r *store.Repo) error {
 	return nil
 }
 
+func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.repos[r.ID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	cp := *r
+	if cp.CreatedAt.IsZero() {
+		cp.CreatedAt = existing.CreatedAt
+	}
+	s.repos[r.ID] = &cp
+	return nil
+}
+
 func (s *Store) RepoByID(_ context.Context, id int64) (*store.Repo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

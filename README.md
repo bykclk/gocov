@@ -40,6 +40,16 @@ docker compose exec server gocov-server repo add \
   -bb-username myuser -bb-app-password "$APP_PASSWORD"   # optional, for build statuses
 ```
 
+Manage repos later with:
+
+```sh
+gocov-server repo list                                   # slugs, branches, credential status
+gocov-server repo rotate-token -slug myworkspace/myrepo  # invalidates the old token
+gocov-server repo update -slug myworkspace/myrepo \
+  -default-branch develop                                # and/or -bb-username/-bb-app-password,
+                                                         # or -clear-credentials
+```
+
 ## Uploading coverage from CI
 
 In Bitbucket Pipelines (commit, branch, repo and PR id are auto-detected):

@@ -2,6 +2,9 @@
 //
 //	gocov-server serve                # default when no subcommand given
 //	gocov-server repo add -slug workspace/repo [flags]
+//	gocov-server repo list
+//	gocov-server repo rotate-token -slug workspace/repo
+//	gocov-server repo update -slug workspace/repo [flags]
 //
 // Configuration via environment: DATABASE_URL (required),
 // GOCOV_ADDR (default :8080), GOCOV_BASE_URL (default http://localhost:8080).
@@ -9,9 +12,7 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"flag"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,13 +26,14 @@ import (
 	"github.com/bykclk/gocov/internal/forge/bitbucket"
 	"github.com/bykclk/gocov/internal/profile"
 	"github.com/bykclk/gocov/internal/server"
-	"github.com/bykclk/gocov/internal/store"
 	storepg "github.com/bykclk/gocov/internal/store/postgres"
 )
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "gocov-server:", err)
+		if !errors.Is(err, errPrinted) {
+			fmt.Fprintln(os.Stderr, "gocov-server:", err)
+		}
 		os.Exit(1)
 	}
 }
@@ -44,10 +46,13 @@ func run(args []string) error {
 	case "serve":
 		return serve()
 	case "repo":
-		if len(args) >= 2 && args[1] == "add" {
-			return repoAdd(args[2:])
+		ctx := context.Background()
+		st, err := connect(ctx)
+		if err != nil {
+			return err
 		}
-		return fmt.Errorf("usage: gocov-server repo add -slug workspace/repo")
+		defer st.Pool().Close()
+		return repoCmd(ctx, st, args[1:], os.Stdout)
 	default:
 		return fmt.Errorf("unknown command %q (want serve|repo)", args[0])
 	}
@@ -98,53 +103,6 @@ func serve() error {
 	}
 	log.Info("listening", "addr", addr, "base_url", baseURL)
 	return httpSrv.ListenAndServe()
-}
-
-func repoAdd(args []string) error {
-	fs := flag.NewFlagSet("repo add", flag.ExitOnError)
-	slug := fs.String("slug", "", "repo slug, namespaced: workspace/repo (required)")
-	forgeName := fs.String("forge", "bitbucket", "forge hosting the repo")
-	defaultBranch := fs.String("default-branch", "main", "default branch")
-	bbUser := fs.String("bb-username", "", "Bitbucket username for build status pushes (optional)")
-	bbPassword := fs.String("bb-app-password", "", "Bitbucket app password (optional)")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *slug == "" {
-		return fmt.Errorf("-slug is required")
-	}
-
-	ctx := context.Background()
-	st, err := connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer st.Pool().Close()
-
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return err
-	}
-	var creds map[string]string
-	if *bbUser != "" || *bbPassword != "" {
-		if *bbUser == "" || *bbPassword == "" {
-			return fmt.Errorf("-bb-username and -bb-app-password must be set together")
-		}
-		creds = map[string]string{"username": *bbUser, "app_password": *bbPassword}
-	}
-
-	r := &store.Repo{
-		Forge:            *forgeName,
-		Slug:             *slug,
-		Token:            hex.EncodeToString(buf),
-		DefaultBranch:    *defaultBranch,
-		ForgeCredentials: creds,
-	}
-	if err := st.CreateRepo(ctx, r); err != nil {
-		return fmt.Errorf("creating repo: %w", err)
-	}
-	fmt.Printf("repo %s added\nupload token: %s\n", *slug, r.Token)
-	return nil
 }
 
 func envOr(key, fallback string) string {
