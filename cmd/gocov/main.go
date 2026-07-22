@@ -13,6 +13,9 @@ import (
 	"os"
 )
 
+// version is stamped by the release build via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "gocov:", err)
@@ -21,8 +24,12 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) == 1 && args[0] == "version" {
+		fmt.Println("gocov", version)
+		return nil
+	}
 	if len(args) == 0 || args[0] != "upload" {
-		return fmt.Errorf("usage: gocov upload [flags] <profile file>")
+		return fmt.Errorf("usage: gocov upload [flags] <profile file> | gocov version")
 	}
 
 	fs := flag.NewFlagSet("upload", flag.ExitOnError)

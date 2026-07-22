@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: gocov
+          POSTGRES_PASSWORD: gocov
+          POSTGRES_DB: gocov
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gocov -d gocov"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Vet
+        run: go vet ./...
+      - name: Test (with Postgres integration tests)
+        env:
+          GOCOV_TEST_DATABASE_URL: postgres://gocov:gocov@localhost:5432/gocov
+        run: go test ./... -covermode=atomic -coverprofile=coverage.out

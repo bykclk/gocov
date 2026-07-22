@@ -32,6 +32,9 @@ import (
 	storepg "github.com/bykclk/gocov/internal/store/postgres"
 )
 
+// version is stamped by the release build via -ldflags "-X main.version=...".
+var version = "dev"
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		if !errors.Is(err, errPrinted) {
@@ -46,6 +49,9 @@ func run(args []string) error {
 		return serve()
 	}
 	switch args[0] {
+	case "version":
+		fmt.Println("gocov-server", version)
+		return nil
 	case "serve":
 		return serve()
 	case "repo":

@@ -67,6 +67,23 @@ In Bitbucket Pipelines (commit, branch, repo and PR id are auto-detected):
 ```
 
 with `GOCOV_SERVER` and `GOCOV_TOKEN` set as repository variables.
+
+On runners without a Go toolchain, use the prebuilt binaries from
+[GitHub Releases](https://github.com/bykclk/gocov/releases) instead
+(linux/darwin/windows, amd64 + arm64, checksums included). Pin a version
+and cache the download on self-hosted runners:
+
+```sh
+ver=v0.1.0
+arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
+bin="$HOME/.cache/gocov/gocov-$ver-linux-$arch"
+if [ ! -x "$bin" ]; then
+  mkdir -p "$(dirname "$bin")"
+  curl -fsSL "https://github.com/bykclk/gocov/releases/download/$ver/gocov-linux-$arch" -o "$bin"
+  chmod +x "$bin"
+fi
+"$bin" upload coverage.out
+```
 Outside CI, values fall back to git or can be passed explicitly:
 
 ```sh
