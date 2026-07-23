@@ -226,9 +226,15 @@ func Compute(files []FileBlocks, added map[string][]int, pathPrefix string) *Res
 }
 
 // matchFile finds the coverage entry for a repo-relative diff path.
-// With a pathPrefix the match is exact; without one a suffix heuristic
-// applies (shortest profile path wins, being the least ambiguous), and
-// bare basenames never suffix-match.
+// With a pathPrefix the match is exact. Without one, two suffix
+// directions are tried, bare basenames never matching either way:
+//   - profile path ends with the diff path (module-qualified profiles,
+//     e.g. Go: "example.com/mod/a/b.go" vs "a/b.go"); the shortest
+//     profile path wins, being the least ambiguous.
+//   - diff path ends with the profile path (package-qualified profiles,
+//     e.g. JaCoCo: "com/example/Foo.java" vs
+//     "src/main/java/com/example/Foo.java"); the longest profile path
+//     wins, being the most specific.
 func matchFile(files []FileBlocks, diffPath, pathPrefix string) *FileBlocks {
 	if pathPrefix != "" {
 		want := strings.TrimSuffix(pathPrefix, "/") + "/" + diffPath
@@ -240,19 +246,27 @@ func matchFile(files []FileBlocks, diffPath, pathPrefix string) *FileBlocks {
 		return nil
 	}
 
-	var best *FileBlocks
+	var forward, reverse *FileBlocks
 	for i := range files {
 		fb := &files[i]
 		if fb.Path == diffPath {
 			return fb
 		}
 		if strings.Contains(diffPath, "/") && strings.HasSuffix(fb.Path, "/"+diffPath) {
-			if best == nil || len(fb.Path) < len(best.Path) {
-				best = fb
+			if forward == nil || len(fb.Path) < len(forward.Path) {
+				forward = fb
+			}
+		}
+		if strings.Contains(fb.Path, "/") && strings.HasSuffix(diffPath, "/"+fb.Path) {
+			if reverse == nil || len(fb.Path) > len(reverse.Path) {
+				reverse = fb
 			}
 		}
 	}
-	return best
+	if forward != nil {
+		return forward
+	}
+	return reverse
 }
 
 // Clone returns a deep copy, so stored results cannot alias caller slices.

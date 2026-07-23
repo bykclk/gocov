@@ -293,6 +293,41 @@ func TestCompute(t *testing.T) {
 		}
 	})
 
+	t.Run("reverse suffix matches package-qualified paths", func(t *testing.T) {
+		// JaCoCo layout: profile path is package-qualified, the diff path
+		// carries the source root.
+		f := []FileBlocks{
+			{Path: "com/example/app/Foo.java", Blocks: blocks([4]int{10, 10, 1, 3}, [4]int{12, 12, 1, 0})},
+		}
+		res := Compute(f, map[string][]int{
+			"src/main/java/com/example/app/Foo.java": {10, 12},
+		}, "")
+		if res.CoveredLines != 1 || res.TotalLines != 2 {
+			t.Errorf("totals = %d/%d, want 1/2", res.CoveredLines, res.TotalLines)
+		}
+	})
+
+	t.Run("reverse suffix picks the most specific profile path", func(t *testing.T) {
+		f := []FileBlocks{
+			{Path: "app/Foo.java", Blocks: blocks([4]int{1, 1, 1, 0})},
+			{Path: "com/example/app/Foo.java", Blocks: blocks([4]int{1, 1, 1, 5})},
+		}
+		res := Compute(f, map[string][]int{"src/main/java/com/example/app/Foo.java": {1}}, "")
+		if res.CoveredLines != 1 {
+			t.Errorf("matched the wrong file: %+v", res)
+		}
+	})
+
+	t.Run("bare profile basename never reverse-matches", func(t *testing.T) {
+		// A default-package Main.java must not bind to every Main.java in
+		// the diff.
+		f := []FileBlocks{{Path: "Main.java", Blocks: blocks([4]int{1, 1, 1, 1})}}
+		res := Compute(f, map[string][]int{"src/main/java/Main.java": {1}}, "")
+		if res.TotalLines != 0 {
+			t.Errorf("bare basename reverse match: %+v", res)
+		}
+	})
+
 	t.Run("bare basename never suffix-matches without prefix", func(t *testing.T) {
 		// A repo-root main.go absent from the profile must not bind to
 		// some package's main.go by basename alone.

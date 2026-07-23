@@ -73,17 +73,17 @@ func (LCOVParser) Parse(r io.Reader) (*Profile, error) {
 
 	p := &Profile{Files: make([]File, 0, len(files))}
 	for path, lines := range files {
-		p.Files = append(p.Files, File{Path: path, Blocks: lcovBlocks(lines)})
+		p.Files = append(p.Files, File{Path: path, Blocks: blocksFromLineHits(lines)})
 	}
 	sort.Slice(p.Files, func(i, j int) bool { return p.Files[i].Path < p.Files[j].Path })
 	return p, nil
 }
 
-// lcovBlocks converts per-line hit counts to blocks, collapsing only
-// strictly consecutive lines with equal counts — a gap must never end up
-// inside a block, or diff coverage would treat non-executable lines as
-// executable.
-func lcovBlocks(lines map[int]int) []Block {
+// blocksFromLineHits converts per-line hit counts to blocks, collapsing
+// only strictly consecutive lines with equal counts — a gap must never end
+// up inside a block, or diff coverage would treat non-executable lines as
+// executable. Shared by the line-oriented parsers (lcov, jacoco).
+func blocksFromLineHits(lines map[int]int) []Block {
 	nums := make([]int, 0, len(lines))
 	for ln := range lines {
 		nums = append(nums, ln)

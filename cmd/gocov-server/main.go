@@ -123,8 +123,9 @@ func serve() error {
 		Store: st,
 		Blobs: blobpg.New(st.Pool()),
 		Parsers: map[string]profile.Parser{
-			"go":   profile.GoParser{},
-			"lcov": profile.LCOVParser{},
+			"go":     profile.GoParser{},
+			"lcov":   profile.LCOVParser{},
+			"jacoco": profile.JaCoCoParser{},
 		},
 		Forges:  map[string]forge.Factory{"bitbucket": bitbucket.Factory},
 		BaseURL: baseURL,

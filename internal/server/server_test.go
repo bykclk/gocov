@@ -55,8 +55,9 @@ func newFixture(t *testing.T, creds map[string]string) *fixture {
 		Store: st,
 		Blobs: blobs,
 		Parsers: map[string]profile.Parser{
-			"go":   profile.GoParser{},
-			"lcov": profile.LCOVParser{},
+			"go":     profile.GoParser{},
+			"lcov":   profile.LCOVParser{},
+			"jacoco": profile.JaCoCoParser{},
 		},
 		Forges:  map[string]forge.Factory{"bitbucket": ff.Factory()},
 		BaseURL: "https://gocov.example",
@@ -320,6 +321,60 @@ end_of_record
 	}
 	if u.Format != "lcov" {
 		t.Errorf("stored format = %q, want lcov (sniffed)", u.Format)
+	}
+}
+
+func TestUploadJaCoCo(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	// PR touches Foo.java under its source root: line 11 covered, 13 not.
+	f.forge.DiffText = `diff --git a/src/main/java/com/example/app/Foo.java b/src/main/java/com/example/app/Foo.java
+--- a/src/main/java/com/example/app/Foo.java
++++ b/src/main/java/com/example/app/Foo.java
+@@ -10,4 +10,4 @@
+ ctx
+-old
++added 11
+ ctx
+-old
++added 13
+`
+	jacoco := `<?xml version="1.0" encoding="UTF-8"?>
+<report name="app">
+  <package name="com/example/app">
+    <sourcefile name="Foo.java">
+      <line nr="10" mi="0" ci="4"/>
+      <line nr="11" mi="0" ci="4"/>
+      <line nr="13" mi="2" ci="0"/>
+    </sourcefile>
+  </package>
+</report>
+`
+	// No format field: sniffed from the XML content.
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "javac1", "branch": "main", "pr_id": "3",
+	}, jacoco)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.TotalPct != float64(2)/float64(3)*100 || resp.CoveredStmts != 2 || resp.TotalStmts != 3 {
+		t.Errorf("totals = %v%% %d/%d, want 2/3", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
+	}
+	// Reverse suffix matching bridges src/main/java: 1/2 changed lines.
+	if resp.DiffStatus != "computed" || resp.DiffTotalLines == nil || *resp.DiffTotalLines != 2 ||
+		*resp.DiffCoveredLines != 1 {
+		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
+			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
+	}
+	u, err := f.store.Upload(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Format != "jacoco" {
+		t.Errorf("stored format = %q, want jacoco (sniffed)", u.Format)
 	}
 }
 

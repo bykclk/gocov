@@ -233,8 +233,9 @@ func (s *Server) forgeFromCreds(forgeName string, creds map[string]string) (forg
 // sourceExts maps a profile format to the extensions of source files whose
 // absence from the coverage report is worth flagging in diff coverage.
 var sourceExts = map[string][]string{
-	"go":   {".go"},
-	"lcov": {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"},
+	"go":     {".go"},
+	"lcov":   {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"},
+	"jacoco": {".java", ".kt", ".kts", ".scala", ".groovy"},
 }
 
 // computeDiffCoverage fetches the PR diff from the forge and intersects it
