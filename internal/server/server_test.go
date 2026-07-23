@@ -55,9 +55,10 @@ func newFixture(t *testing.T, creds map[string]string) *fixture {
 		Store: st,
 		Blobs: blobs,
 		Parsers: map[string]profile.Parser{
-			"go":     profile.GoParser{},
-			"lcov":   profile.LCOVParser{},
-			"jacoco": profile.JaCoCoParser{},
+			"go":        profile.GoParser{},
+			"lcov":      profile.LCOVParser{},
+			"jacoco":    profile.JaCoCoParser{},
+			"cobertura": profile.CoberturaParser{},
 		},
 		Forges:  map[string]forge.Factory{"bitbucket": ff.Factory()},
 		BaseURL: "https://gocov.example",
@@ -254,7 +255,7 @@ func TestUploadValidation(t *testing.T) {
 		{"repo mismatch", map[string]string{"repo": "other/repo", "commit": "c"}, testProfile, http.StatusForbidden},
 		{"missing commit", map[string]string{}, testProfile, http.StatusBadRequest},
 		{"missing profile file", map[string]string{"commit": "c"}, "", http.StatusBadRequest},
-		{"unknown format", map[string]string{"commit": "c", "format": "cobertura"}, testProfile, http.StatusBadRequest},
+		{"unknown format", map[string]string{"commit": "c", "format": "clover"}, testProfile, http.StatusBadRequest},
 		{"malformed profile", map[string]string{"commit": "c"}, "not a profile", http.StatusUnprocessableEntity},
 	}
 	for _, tt := range tests {
@@ -375,6 +376,65 @@ func TestUploadJaCoCo(t *testing.T) {
 	}
 	if u.Format != "jacoco" {
 		t.Errorf("stored format = %q, want jacoco (sniffed)", u.Format)
+	}
+}
+
+func TestUploadCobertura(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	// PR touches myapp/app.py: line 2 covered, line 6 not.
+	f.forge.DiffText = `diff --git a/myapp/app.py b/myapp/app.py
+--- a/myapp/app.py
++++ b/myapp/app.py
+@@ -1,6 +1,6 @@
+ ctx
+-old
++added 2
+ ctx
+ ctx
+ ctx
+-old
++added 6
+`
+	cobertura := `<?xml version="1.0" ?>
+<coverage lines-valid="4" lines-covered="3" line-rate="0.75">
+  <packages><package name="myapp"><classes>
+    <class name="app.py" filename="myapp/app.py">
+      <lines>
+        <line number="1" hits="1"/>
+        <line number="2" hits="4"/>
+        <line number="3" hits="4"/>
+        <line number="6" hits="0"/>
+      </lines>
+    </class>
+  </classes></package></packages>
+</coverage>
+`
+	// No format field: sniffed from the XML content.
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "pyc1", "branch": "main", "pr_id": "5",
+	}, cobertura)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.TotalPct != 75 || resp.CoveredStmts != 3 || resp.TotalStmts != 4 {
+		t.Errorf("totals = %v%% %d/%d, want 75%% 3/4", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
+	}
+	// Repo-relative cobertura paths match the diff exactly: 1/2.
+	if resp.DiffStatus != "computed" || resp.DiffTotalLines == nil || *resp.DiffTotalLines != 2 ||
+		*resp.DiffCoveredLines != 1 {
+		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
+			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
+	}
+	u, err := f.store.Upload(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Format != "cobertura" {
+		t.Errorf("stored format = %q, want cobertura (sniffed)", u.Format)
 	}
 }
 

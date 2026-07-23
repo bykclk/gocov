@@ -169,7 +169,7 @@ func TestDetectJaCoCo(t *testing.T) {
 		{"full report with doctype", jacocoSample, "jacoco"},
 		{"bare report element", `<report name="x"><package name="p"/></report>`, "jacoco"},
 		{"xml prolog then report", "<?xml version=\"1.0\"?>\n<report name=\"x\">", "jacoco"},
-		{"other xml", "<?xml version=\"1.0\"?>\n<coverage></coverage>", ""},
+		{"other xml", "<?xml version=\"1.0\"?>\n<data></data>", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

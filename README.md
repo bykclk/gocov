@@ -3,15 +3,16 @@
 Self-hostable coverage tracking — an open-source Coveralls/Codecov
 alternative. Single binary + Postgres. Bitbucket Cloud is the first
 supported forge. Supported formats: Go cover profiles, LCOV tracefiles
-(JavaScript/TypeScript — Jest, Vitest, nyc, c8) and JaCoCo XML reports
-(Java/Kotlin — Maven, Gradle, Android); the format is detected from the
-uploaded content.
+(JavaScript/TypeScript — Jest, Vitest, nyc, c8), JaCoCo XML
+(Java/Kotlin — Maven, Gradle, Android) and Cobertura XML
+(Python — coverage.py/pytest-cov; also PHPUnit, coverlet, gcovr); the
+format is detected from the uploaded content.
 
 ## Features (MVP)
 
 - Parses Go cover profiles (`go test -coverprofile`), LCOV tracefiles
-  (Jest/Vitest/nyc `lcov.info`) and JaCoCo XML (`jacoco.xml`) into total
-  and per-file coverage
+  (Jest/Vitest/nyc `lcov.info`), JaCoCo XML (`jacoco.xml`) and Cobertura
+  XML (`coverage.xml`) into total and per-file coverage
 - `POST /api/v1/upload` API with per-repo Bearer tokens
 - SVG coverage badge per repo (`/badge/{workspace}/{repo}.svg`)
 - Web UI: repo list → upload list → per-file coverage table
@@ -112,8 +113,8 @@ gocov upload -server https://gocov.example -token $TOKEN \
   coverage.out
 ```
 
-JavaScript/TypeScript and Java/Kotlin projects upload their reports the
-same way — the format is detected from the content, no flag needed:
+Other ecosystems upload their reports the same way — the format is
+detected from the content, no flag needed:
 
 ```sh
 npx jest --coverage             # or vitest run --coverage, nyc, c8 ...
@@ -124,6 +125,9 @@ gocov upload target/site/jacoco/jacoco.xml
 
 gradle test jacocoTestReport    # xml.required = true
 gocov upload build/reports/jacoco/test/jacocoTestReport.xml
+
+pytest --cov --cov-report=xml   # coverage.py / pytest-cov
+gocov upload coverage.xml
 ```
 
 JaCoCo paths are package-qualified (`com/example/Foo.java`); diff
@@ -150,7 +154,7 @@ the repo's default branch.
 | `commit`  | required commit SHA                            |
 | `branch`  | defaults to the repo's default branch          |
 | `pr_id`   | optional pull request id                       |
-| `format`  | `go`, `lcov` or `jacoco`; omitted → detected from content |
+| `format`  | `go`, `lcov`, `jacoco` or `cobertura`; omitted → detected from content |
 | `path_prefix` | maps profile paths to repo paths for diff coverage, e.g. the Go module path (the CLI fills it from go.mod) |
 
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,

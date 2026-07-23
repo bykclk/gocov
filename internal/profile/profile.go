@@ -70,10 +70,11 @@ type Parser interface {
 }
 
 // Detect guesses the profile format from its content, so uploads do not
-// have to name it explicitly. Returns "go", "lcov", "jacoco" or "" when
-// unknown. Go cover profiles start with a "mode:" line; LCOV tracefiles
-// consist of TN:/SF:/DA: records; JaCoCo XML reports have a <report> root
-// (usually preceded by a JACOCO doctype).
+// have to name it explicitly. Returns "go", "lcov", "jacoco", "cobertura"
+// or "" when unknown. Go cover profiles start with a "mode:" line; LCOV
+// tracefiles consist of TN:/SF:/DA: records; JaCoCo XML reports have a
+// <report> root (usually preceded by a JACOCO doctype); Cobertura XML
+// reports have a <coverage> root.
 func Detect(data []byte) string {
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -90,6 +91,8 @@ func Detect(data []byte) string {
 			return "lcov"
 		case strings.Contains(line, "JACOCO"), strings.Contains(line, "<report"):
 			return "jacoco"
+		case strings.Contains(line, "cobertura"), strings.Contains(line, "<coverage"):
+			return "cobertura"
 		case strings.HasPrefix(line, "<?xml"), strings.HasPrefix(line, "<!DOCTYPE"):
 			// XML prolog: keep scanning for the root element.
 		}
