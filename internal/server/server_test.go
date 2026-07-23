@@ -52,9 +52,12 @@ func newFixture(t *testing.T, creds map[string]string) *fixture {
 	blobs := blobmem.New()
 	ff := forgefake.New()
 	srv := New(Config{
-		Store:   st,
-		Blobs:   blobs,
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+		Store: st,
+		Blobs: blobs,
+		Parsers: map[string]profile.Parser{
+			"go":   profile.GoParser{},
+			"lcov": profile.LCOVParser{},
+		},
 		Forges:  map[string]forge.Factory{"bitbucket": ff.Factory()},
 		BaseURL: "https://gocov.example",
 	})
@@ -250,7 +253,7 @@ func TestUploadValidation(t *testing.T) {
 		{"repo mismatch", map[string]string{"repo": "other/repo", "commit": "c"}, testProfile, http.StatusForbidden},
 		{"missing commit", map[string]string{}, testProfile, http.StatusBadRequest},
 		{"missing profile file", map[string]string{"commit": "c"}, "", http.StatusBadRequest},
-		{"unknown format", map[string]string{"commit": "c", "format": "lcov"}, testProfile, http.StatusBadRequest},
+		{"unknown format", map[string]string{"commit": "c", "format": "cobertura"}, testProfile, http.StatusBadRequest},
 		{"malformed profile", map[string]string{"commit": "c"}, "not a profile", http.StatusUnprocessableEntity},
 	}
 	for _, tt := range tests {
@@ -260,6 +263,63 @@ func TestUploadValidation(t *testing.T) {
 				t.Errorf("status = %d, want %d; body = %s", rec.Code, tt.want, rec.Body)
 			}
 		})
+	}
+}
+
+func TestUploadLCOV(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	// PR diff touches src/app.js lines 2 (covered) and 5 (uncovered).
+	f.forge.DiffText = `diff --git a/src/app.js b/src/app.js
+--- a/src/app.js
++++ b/src/app.js
+@@ -1,5 +1,5 @@
+ ctx
+-old
++added 2
+ ctx
+ ctx
+-old
++added 5
+`
+	lcov := `SF:src/app.js
+DA:1,1
+DA:2,1
+DA:3,2
+DA:5,0
+end_of_record
+SF:src/util.js
+DA:1,0
+end_of_record
+`
+	// No format field: the server must sniff LCOV from the content.
+	rec := doUpload(t, f, "secret-token", map[string]string{
+		"commit": "jsc1", "branch": "main", "pr_id": "9",
+	}, lcov)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	// 3 of 5 lines covered across both files.
+	if resp.TotalPct != 60 || resp.CoveredStmts != 3 || resp.TotalStmts != 5 {
+		t.Errorf("totals = %.1f%% %d/%d, want 60%% 3/5", resp.TotalPct, resp.CoveredStmts, resp.TotalStmts)
+	}
+	// Diff coverage: line 2 covered, line 5 uncovered -> 1/2. Exact path
+	// match, no path_prefix needed for repo-relative lcov paths.
+	if resp.DiffStatus != "computed" || resp.DiffTotalLines == nil || *resp.DiffTotalLines != 2 ||
+		*resp.DiffCoveredLines != 1 {
+		t.Errorf("diff = %v/%v (%s), want 1/2 computed; body = %s",
+			resp.DiffCoveredLines, resp.DiffTotalLines, resp.DiffStatus, rec.Body)
+	}
+	// The sniffed format is what gets stored.
+	u, err := f.store.Upload(context.Background(), resp.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Format != "lcov" {
+		t.Errorf("stored format = %q, want lcov (sniffed)", u.Format)
 	}
 }
 

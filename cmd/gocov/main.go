@@ -11,6 +11,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"github.com/bykclk/gocov/internal/profile"
 )
 
 // version is stamped by the release build via -ldflags "-X main.version=...".
@@ -39,7 +41,7 @@ func run(args []string) error {
 	commit := fs.String("commit", "", "commit SHA (default: auto-detect)")
 	branch := fs.String("branch", "", "branch name (default: auto-detect)")
 	pr := fs.String("pr", "", "pull request id (default: auto-detect)")
-	format := fs.String("format", "go", "coverage profile format")
+	format := fs.String("format", "", "coverage profile format: go or lcov (default: detect from content)")
 	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
@@ -61,17 +63,29 @@ func run(args []string) error {
 	if build.Commit == "" {
 		return fmt.Errorf("could not detect commit SHA: pass -commit")
 	}
+
+	profileData, err := os.ReadFile(profilePath)
+	if err != nil {
+		return err
+	}
+	resolvedFormat := *format
+	if resolvedFormat == "" {
+		resolvedFormat = profile.Detect(profileData)
+		if resolvedFormat == "" {
+			return fmt.Errorf("could not detect the coverage format of %s: pass -format go|lcov", profilePath)
+		}
+	}
 	prefix := *pathPrefix
-	if prefix == "" && *format == "go" {
+	if prefix == "" && resolvedFormat == "go" {
 		prefix = moduleFromGoMod("go.mod")
 	}
 
 	resp, err := upload(uploadRequest{
 		Server:      *server,
 		Token:       *token,
-		Format:      *format,
+		Format:      resolvedFormat,
 		PathPrefix:  prefix,
-		ProfilePath: profilePath,
+		ProfileData: profileData,
 		Build:       build,
 	})
 	if err != nil {

@@ -3,7 +3,12 @@
 // implement. Nothing outside this package may depend on a concrete format.
 package profile
 
-import "io"
+import (
+	"bufio"
+	"bytes"
+	"io"
+	"strings"
+)
 
 // Block is a contiguous range of statements with a hit count. Line and
 // column positions are 1-based; the end position is exclusive of the
@@ -62,4 +67,27 @@ func Percent(covered, total int64) float64 {
 // Implementations exist per format ("go" first; lcov, cobertura later).
 type Parser interface {
 	Parse(r io.Reader) (*Profile, error)
+}
+
+// Detect guesses the profile format from its content, so uploads do not
+// have to name it explicitly. Returns "go", "lcov" or "" when unknown.
+// Go cover profiles start with a "mode:" line; LCOV tracefiles consist of
+// TN:/SF:/DA: records.
+func Detect(data []byte) string {
+	sc := bufio.NewScanner(bytes.NewReader(data))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for seen := 0; sc.Scan() && seen < 10; {
+		line := strings.TrimSpace(strings.TrimRight(sc.Text(), "\r"))
+		if line == "" {
+			continue
+		}
+		seen++
+		switch {
+		case strings.HasPrefix(line, "mode:"):
+			return "go"
+		case strings.HasPrefix(line, "TN:"), strings.HasPrefix(line, "SF:"):
+			return "lcov"
+		}
+	}
+	return ""
 }

@@ -1,13 +1,14 @@
 # gocov
 
-Self-hostable coverage tracking for Go projects — an open-source
-Coveralls/Codecov alternative. Single binary + Postgres. Bitbucket Cloud
-is the first supported forge.
+Self-hostable coverage tracking — an open-source Coveralls/Codecov
+alternative. Single binary + Postgres. Bitbucket Cloud is the first
+supported forge. Go cover profiles and LCOV tracefiles (JavaScript,
+TypeScript and anything else that emits lcov.info) are supported.
 
 ## Features (MVP)
 
-- Parses Go cover profiles (`go test -coverprofile`) into total and
-  per-file statement coverage
+- Parses Go cover profiles (`go test -coverprofile`) and LCOV tracefiles
+  (Jest/Vitest/nyc `lcov.info`) into total and per-file coverage
 - `POST /api/v1/upload` API with per-repo Bearer tokens
 - SVG coverage badge per repo (`/badge/{workspace}/{repo}.svg`)
 - Web UI: repo list → upload list → per-file coverage table
@@ -108,6 +109,14 @@ gocov upload -server https://gocov.example -token $TOKEN \
   coverage.out
 ```
 
+JavaScript/TypeScript projects upload their LCOV tracefile the same way —
+the format is detected from the content, no flag needed:
+
+```sh
+npx jest --coverage             # or vitest run --coverage, nyc, c8 ...
+gocov upload coverage/lcov.info
+```
+
 ## Badge
 
 ```markdown
@@ -128,7 +137,7 @@ the repo's default branch.
 | `commit`  | required commit SHA                            |
 | `branch`  | defaults to the repo's default branch          |
 | `pr_id`   | optional pull request id                       |
-| `format`  | profile format, default `go`                   |
+| `format`  | `go` or `lcov`; omitted → detected from content |
 | `path_prefix` | maps profile paths to repo paths for diff coverage, e.g. the Go module path (the CLI fills it from go.mod) |
 
 Returns `201` with `{id, total_pct, covered_stmts, total_stmts,

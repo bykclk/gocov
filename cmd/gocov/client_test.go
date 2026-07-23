@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"testing"
 
 	blobmem "github.com/bykclk/gocov/internal/blobstore/memory"
@@ -30,18 +28,13 @@ func TestUploadEndToEnd(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	dir := t.TempDir()
-	path := filepath.Join(dir, "coverage.out")
-	prof := "mode: set\nexample.com/m/a.go:1.1,2.2 4 1\nexample.com/m/a.go:3.1,4.2 1 0\n"
-	if err := os.WriteFile(path, []byte(prof), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	prof := []byte("mode: set\nexample.com/m/a.go:1.1,2.2 4 1\nexample.com/m/a.go:3.1,4.2 1 0\n")
 
 	resp, err := upload(uploadRequest{
 		Server:      srv.URL,
 		Token:       "tok",
 		Format:      "go",
-		ProfilePath: path,
+		ProfileData: prof,
 		Build:       buildInfo{Repo: "acme/widgets", Commit: "abc", Branch: "main"},
 	})
 	if err != nil {
@@ -53,7 +46,7 @@ func TestUploadEndToEnd(t *testing.T) {
 
 	// Wrong token surfaces the server error.
 	if _, err := upload(uploadRequest{
-		Server: srv.URL, Token: "bad", Format: "go", ProfilePath: path,
+		Server: srv.URL, Token: "bad", Format: "go", ProfileData: prof,
 		Build: buildInfo{Commit: "abc"},
 	}); err == nil {
 		t.Error("want error with invalid token")

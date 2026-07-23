@@ -81,15 +81,6 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		branch = repo.DefaultBranch
 	}
 	prID := r.FormValue("pr_id")
-	format := r.FormValue("format")
-	if format == "" {
-		format = "go"
-	}
-	parser, ok := s.parsers[format]
-	if !ok {
-		httpError(w, http.StatusBadRequest, "unsupported format %q", format)
-		return
-	}
 
 	file, _, err := r.FormFile("profile")
 	if err != nil {
@@ -100,6 +91,22 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	raw, err := io.ReadAll(file)
 	if err != nil {
 		httpError(w, http.StatusBadRequest, "reading profile: %v", err)
+		return
+	}
+
+	// An explicit format wins; otherwise sniff the content, keeping "go"
+	// as the historical default for unrecognizable input.
+	format := r.FormValue("format")
+	if format == "" {
+		if detected := profile.Detect(raw); detected != "" {
+			format = detected
+		} else {
+			format = "go"
+		}
+	}
+	parser, ok := s.parsers[format]
+	if !ok {
+		httpError(w, http.StatusBadRequest, "unsupported format %q", format)
 		return
 	}
 
@@ -223,9 +230,12 @@ func (s *Server) forgeFromCreds(forgeName string, creds map[string]string) (forg
 	return factory(creds)
 }
 
-// sourceExt maps a profile format to the extension of source files whose
+// sourceExts maps a profile format to the extensions of source files whose
 // absence from the coverage report is worth flagging in diff coverage.
-var sourceExt = map[string]string{"go": ".go"}
+var sourceExts = map[string][]string{
+	"go":   {".go"},
+	"lcov": {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"},
+}
 
 // computeDiffCoverage fetches the PR diff from the forge and intersects it
 // with the parsed profile. Best effort: any failure is reported in the
@@ -259,11 +269,14 @@ func (s *Server) computeDiffCoverage(ctx context.Context, fg forge.Forge, fgErr 
 
 	// Keep only source files in the "changed but no coverage data" list;
 	// docs, configs etc. are expected to be absent from the profile.
-	if ext := sourceExt[format]; ext != "" {
+	if exts := sourceExts[format]; len(exts) > 0 {
 		var src []string
 		for _, p := range result.UnmatchedFiles {
-			if strings.HasSuffix(p, ext) {
-				src = append(src, p)
+			for _, ext := range exts {
+				if strings.HasSuffix(p, ext) {
+					src = append(src, p)
+					break
+				}
 			}
 		}
 		result.UnmatchedFiles = src

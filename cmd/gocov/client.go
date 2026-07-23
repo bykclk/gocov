@@ -7,7 +7,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 )
@@ -17,7 +16,7 @@ type uploadRequest struct {
 	Token       string
 	Format      string
 	PathPrefix  string
-	ProfilePath string
+	ProfileData []byte
 	Build       buildInfo
 }
 
@@ -39,11 +38,6 @@ type uploadResponse struct {
 }
 
 func upload(req uploadRequest) (*uploadResponse, error) {
-	profileData, err := os.ReadFile(req.ProfilePath)
-	if err != nil {
-		return nil, err
-	}
-
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	fields := map[string]string{
@@ -66,7 +60,7 @@ func upload(req uploadRequest) (*uploadResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := fw.Write(profileData); err != nil {
+	if _, err := fw.Write(req.ProfileData); err != nil {
 		return nil, err
 	}
 	if err := mw.Close(); err != nil {

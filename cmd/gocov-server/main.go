@@ -120,9 +120,12 @@ func serve() error {
 	}
 
 	srv := server.New(server.Config{
-		Store:   st,
-		Blobs:   blobpg.New(st.Pool()),
-		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+		Store: st,
+		Blobs: blobpg.New(st.Pool()),
+		Parsers: map[string]profile.Parser{
+			"go":   profile.GoParser{},
+			"lcov": profile.LCOVParser{},
+		},
 		Forges:  map[string]forge.Factory{"bitbucket": bitbucket.Factory},
 		BaseURL: baseURL,
 		Logger:  log,
