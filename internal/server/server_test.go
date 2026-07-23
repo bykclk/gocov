@@ -224,6 +224,19 @@ func TestUploadAuth(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("invalid token rejected before body parsing", func(t *testing.T) {
+		// A garbage body with a bad token must yield 401, not 400: the
+		// token check runs before the multipart parse.
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/upload", strings.NewReader("not multipart"))
+		req.Header.Set("Content-Type", "multipart/form-data; boundary=xxx")
+		req.Header.Set("Authorization", "Bearer nope")
+		rec := httptest.NewRecorder()
+		f.srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d, want 401 before parsing", rec.Code)
+		}
+	})
 }
 
 func TestUploadValidation(t *testing.T) {
@@ -428,6 +441,244 @@ func TestUploadDiffCoverageErrorPaths(t *testing.T) {
 }
 
 var errFake = errors.New("fake forge failure")
+
+func TestWorkspaceTokenUpload(t *testing.T) {
+	ctx := context.Background()
+	newWsFixture := func(t *testing.T, wsDefaultBranch, forgeDefaultBranch string, withGlobalCreds bool) *fixture {
+		t.Helper()
+		st := storemem.New()
+		ws := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-token", DefaultBranch: wsDefaultBranch}
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+		ff := forgefake.New()
+		ff.DefaultBranch = forgeDefaultBranch
+		cfg := Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			Forges:  map[string]forge.Factory{"bitbucket": ff.Factory()},
+			BaseURL: "https://gocov.example",
+		}
+		if withGlobalCreds {
+			cfg.DefaultForgeCredentials = map[string]map[string]string{
+				"bitbucket": {"username": "bot", "app_password": "botpass"},
+			}
+		}
+		return &fixture{srv: New(cfg), store: st, forge: ff}
+	}
+
+	t.Run("auto-creates repo with forge default branch", func(t *testing.T) {
+		f := newWsFixture(t, "develop", "development", true)
+		rec := doUpload(t, f, "ws-token", map[string]string{
+			"repo": "acme/newrepo", "commit": "c1", "branch": "development",
+		}, testProfile)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+		}
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if !resp.RepoCreated {
+			t.Error("repo_created not reported")
+		}
+		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repo.DefaultBranch != "development" {
+			t.Errorf("default branch = %q, want development (from forge)", repo.DefaultBranch)
+		}
+		if repo.Token == "" || repo.Token == "ws-token" {
+			t.Errorf("auto-created repo must get its own token, got %q", repo.Token)
+		}
+		if len(f.forge.DefaultBranchCalls) != 1 || f.forge.DefaultBranchCalls[0] != "acme/newrepo" {
+			t.Errorf("default branch calls = %v", f.forge.DefaultBranchCalls)
+		}
+
+		// Second upload reuses the repo.
+		rec = doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c2"}, testProfile)
+		var resp2 uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp2); err != nil {
+			t.Fatal(err)
+		}
+		if resp2.RepoCreated {
+			t.Error("second upload must not report repo_created")
+		}
+		repos, _ := f.store.ListRepos(ctx)
+		if len(repos) != 1 {
+			t.Errorf("got %d repos, want 1", len(repos))
+		}
+	})
+
+	t.Run("falls back to workspace default branch without forge", func(t *testing.T) {
+		// No global credentials: the forge cannot be asked.
+		f := newWsFixture(t, "develop", "development", false)
+		doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c1"}, testProfile)
+		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repo.DefaultBranch != "develop" {
+			t.Errorf("default branch = %q, want develop (workspace fallback)", repo.DefaultBranch)
+		}
+		if len(f.forge.DefaultBranchCalls) != 0 {
+			t.Error("forge must not be asked without credentials")
+		}
+	})
+
+	t.Run("falls back to main when forge has no answer", func(t *testing.T) {
+		// Credentials exist but the fake forge returns ErrNotImplemented,
+		// and the workspace has no default of its own.
+		f := newWsFixture(t, "", "", true)
+		doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c1"}, testProfile)
+		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repo.DefaultBranch != "main" {
+			t.Errorf("default branch = %q, want main (last resort)", repo.DefaultBranch)
+		}
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		f := newWsFixture(t, "", "", false)
+		tests := []struct {
+			name   string
+			fields map[string]string
+			want   int
+		}{
+			{"missing repo field", map[string]string{"commit": "c"}, http.StatusBadRequest},
+			{"slug outside workspace", map[string]string{"repo": "other/repo", "commit": "c"}, http.StatusForbidden},
+			{"no slash", map[string]string{"repo": "acme", "commit": "c"}, http.StatusForbidden},
+			{"prefix only", map[string]string{"repo": "acme/", "commit": "c"}, http.StatusBadRequest},
+			{"trailing slash", map[string]string{"repo": "acme/widgets/", "commit": "c"}, http.StatusBadRequest},
+			{"multi segment", map[string]string{"repo": "acme/a/b", "commit": "c"}, http.StatusBadRequest},
+			{"path traversal", map[string]string{"repo": "acme/../victim", "commit": "c"}, http.StatusBadRequest},
+			{"overlong name", map[string]string{"repo": "acme/" + strings.Repeat("x", 101), "commit": "c"}, http.StatusBadRequest},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				rec := doUpload(t, f, "ws-token", tt.fields, testProfile)
+				if rec.Code != tt.want {
+					t.Errorf("status = %d, want %d; body = %s", rec.Code, tt.want, rec.Body)
+				}
+			})
+		}
+		if repos, _ := f.store.ListRepos(ctx); len(repos) != 0 {
+			t.Errorf("rejected uploads must not create repos, got %v", repos)
+		}
+	})
+
+	t.Run("forge 404 blocks auto-registration", func(t *testing.T) {
+		f := newWsFixture(t, "develop", "", true)
+		f.forge.DefaultBranchErr = forge.ErrRepoNotFound
+		rec := doUpload(t, f, "ws-token", map[string]string{"repo": "acme/ghost", "commit": "c"}, testProfile)
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("status = %d, want 404; body = %s", rec.Code, rec.Body)
+		}
+		if _, err := f.store.RepoBySlug(ctx, "acme/ghost"); !errors.Is(err, store.ErrNotFound) {
+			t.Error("nonexistent forge repo must not be registered")
+		}
+	})
+
+	t.Run("transient forge error falls back instead of blocking", func(t *testing.T) {
+		f := newWsFixture(t, "develop", "", true)
+		f.forge.DefaultBranchErr = errFake
+		rec := doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c"}, testProfile)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+		}
+		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if repo.DefaultBranch != "develop" {
+			t.Errorf("default branch = %q, want develop (workspace fallback)", repo.DefaultBranch)
+		}
+	})
+
+	t.Run("repo token still works and wins", func(t *testing.T) {
+		f := newWsFixture(t, "", "", false)
+		repo := &store.Repo{Forge: "bitbucket", Slug: "acme/existing", Token: "repo-token", DefaultBranch: "main"}
+		if err := f.store.CreateRepo(ctx, repo); err != nil {
+			t.Fatal(err)
+		}
+		rec := doUpload(t, f, "repo-token", map[string]string{"commit": "c"}, testProfile)
+		if rec.Code != http.StatusCreated {
+			t.Errorf("repo token upload failed: %d", rec.Code)
+		}
+	})
+}
+
+func TestDefaultForgeCredentials(t *testing.T) {
+	newSrvWith := func(t *testing.T, repoCreds map[string]string, factory forge.Factory) *Server {
+		t.Helper()
+		st := storemem.New()
+		repo := &store.Repo{
+			Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token",
+			DefaultBranch: "main", ForgeCredentials: repoCreds,
+		}
+		if err := st.CreateRepo(context.Background(), repo); err != nil {
+			t.Fatal(err)
+		}
+		return New(Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			Forges:  map[string]forge.Factory{"bitbucket": factory},
+			DefaultForgeCredentials: map[string]map[string]string{
+				"bitbucket": {"username": "bot", "app_password": "botpass"},
+			},
+		})
+	}
+	upload := func(t *testing.T, srv *Server) uploadResponse {
+		t.Helper()
+		body, ct := multipartUpload(t, map[string]string{"commit": "c"}, testProfile)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/upload", body)
+		req.Header.Set("Content-Type", ct)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("body: %s", rec.Body)
+		}
+		return resp
+	}
+
+	t.Run("repo without credentials falls back to global bot", func(t *testing.T) {
+		var gotCreds map[string]string
+		ff := forgefake.New()
+		factory := func(creds map[string]string) (forge.Forge, error) {
+			gotCreds = creds
+			return ff, nil
+		}
+		if resp := upload(t, newSrvWith(t, nil, factory)); resp.BuildStatus != "posted" {
+			t.Errorf("build_status = %q, want posted via global credentials", resp.BuildStatus)
+		}
+		if gotCreds["username"] != "bot" {
+			t.Errorf("factory got %v, want global bot credentials", gotCreds)
+		}
+	})
+
+	t.Run("per-repo credentials take precedence", func(t *testing.T) {
+		var gotCreds map[string]string
+		ff := forgefake.New()
+		factory := func(creds map[string]string) (forge.Forge, error) {
+			gotCreds = creds
+			return ff, nil
+		}
+		own := map[string]string{"username": "own", "app_password": "ownpass"}
+		if resp := upload(t, newSrvWith(t, own, factory)); resp.BuildStatus != "posted" {
+			t.Errorf("build_status = %q", resp.BuildStatus)
+		}
+		if gotCreds["username"] != "own" {
+			t.Errorf("factory got %v, want per-repo credentials", gotCreds)
+		}
+	})
+}
 
 func TestHealthz(t *testing.T) {
 	get := func(srv *Server) *httptest.ResponseRecorder {

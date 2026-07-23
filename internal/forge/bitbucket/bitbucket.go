@@ -112,6 +112,40 @@ func (c *Client) GetPRDiff(ctx context.Context, repoSlug, prID string) (string, 
 // maxDiffBytes bounds PR diffs; larger diffs error instead of truncating.
 const maxDiffBytes = 32 << 20
 
+// GetDefaultBranch reads the repo's main branch via GET /repositories/{slug}.
+func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/repositories/"+repoSlug, nil)
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth(c.Username, c.AppPassword)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("bitbucket: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return "", fmt.Errorf("%w: %s", forge.ErrRepoNotFound, repoSlug)
+	}
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return "", fmt.Errorf("bitbucket: /repositories/%s returned %d: %s", repoSlug, resp.StatusCode, msg)
+	}
+	var body struct {
+		MainBranch struct {
+			Name string `json:"name"`
+		} `json:"mainbranch"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&body); err != nil {
+		return "", fmt.Errorf("bitbucket: decoding repository: %w", err)
+	}
+	if body.MainBranch.Name == "" {
+		return "", fmt.Errorf("bitbucket: repository %s has no main branch", repoSlug)
+	}
+	return body.MainBranch.Name, nil
+}
+
 func (c *Client) post(ctx context.Context, path string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {

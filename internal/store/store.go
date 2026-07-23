@@ -14,6 +14,20 @@ import (
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("store: not found")
 
+// Workspace groups repos under a slug prefix ("workspace" in
+// "workspace/repo"). Its token authorizes uploads for every repo with
+// that prefix; unknown repos are auto-registered on first upload.
+type Workspace struct {
+	ID     int64
+	Forge  string // forge for auto-created repos, "bitbucket" for now
+	Prefix string // e.g. "myworkspace"
+	Token  string
+	// DefaultBranch is assigned to auto-created repos when the forge
+	// cannot be asked for the real one.
+	DefaultBranch string
+	CreatedAt     time.Time
+}
+
 // Repo is a tracked repository. Slug is namespaced ("workspace/repo").
 type Repo struct {
 	ID            int64
@@ -68,6 +82,16 @@ type Store interface {
 	RepoBySlug(ctx context.Context, slug string) (*Repo, error)
 	RepoByToken(ctx context.Context, token string) (*Repo, error)
 	ListRepos(ctx context.Context) ([]*Repo, error)
+
+	CreateWorkspace(ctx context.Context, w *Workspace) error
+	// UpdateWorkspace replaces the stored row matching w.ID with w's fields.
+	UpdateWorkspace(ctx context.Context, w *Workspace) error
+	// DeleteWorkspace removes the workspace token; repos created through
+	// it are left untouched.
+	DeleteWorkspace(ctx context.Context, id int64) error
+	WorkspaceByPrefix(ctx context.Context, prefix string) (*Workspace, error)
+	WorkspaceByToken(ctx context.Context, token string) (*Workspace, error)
+	ListWorkspaces(ctx context.Context) ([]*Workspace, error)
 
 	// CreateUpload persists the upload and its per-file rows atomically,
 	// setting u.ID and u.CreatedAt.

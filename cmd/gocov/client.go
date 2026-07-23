@@ -29,6 +29,7 @@ type uploadResponse struct {
 	TotalStmts   int64    `json:"total_stmts"`
 	DeltaPct     *float64 `json:"delta_pct"`
 	BuildStatus  string   `json:"build_status"`
+	RepoCreated  bool     `json:"repo_created"`
 
 	DiffPct          *float64 `json:"diff_pct"`
 	DiffCoveredLines *int64   `json:"diff_covered_lines"`

@@ -83,6 +83,9 @@ func run(args []string) error {
 		fmt.Printf(", delta %+.1f%%", *resp.DeltaPct)
 	}
 	fmt.Println()
+	if resp.RepoCreated {
+		fmt.Println("repo registered on first upload")
+	}
 	if resp.DiffPct != nil && resp.DiffCoveredLines != nil && resp.DiffTotalLines != nil {
 		fmt.Printf("diff coverage: %.1f%% (%d/%d changed lines)\n",
 			*resp.DiffPct, *resp.DiffCoveredLines, *resp.DiffTotalLines)

@@ -32,19 +32,24 @@ type Config struct {
 	// Health is probed by GET /healthz (e.g. a database ping).
 	// When nil, /healthz always reports healthy.
 	Health func(ctx context.Context) error
+	// DefaultForgeCredentials maps a forge name to fallback credentials
+	// (e.g. a global bot account) used for repos that have none of their
+	// own. Per-repo credentials always take precedence.
+	DefaultForgeCredentials map[string]map[string]string
 }
 
 // Server is the gocov HTTP server.
 type Server struct {
-	store   store.Store
-	blobs   blobstore.Store
-	parsers map[string]profile.Parser
-	forges  map[string]forge.Factory
-	baseURL string
-	log     *slog.Logger
-	tmpl    *template.Template
-	mux     *http.ServeMux
-	health  func(ctx context.Context) error
+	store        store.Store
+	blobs        blobstore.Store
+	parsers      map[string]profile.Parser
+	forges       map[string]forge.Factory
+	baseURL      string
+	log          *slog.Logger
+	tmpl         *template.Template
+	mux          *http.ServeMux
+	health       func(ctx context.Context) error
+	defaultCreds map[string]map[string]string
 }
 
 // New builds a Server; panics only on programmer error (bad templates).
@@ -66,15 +71,16 @@ func New(cfg Config) *Server {
 	tmpl := template.Must(template.New("").Funcs(funcs).ParseFS(templatesFS, "templates/*.html"))
 
 	s := &Server{
-		store:   cfg.Store,
-		blobs:   cfg.Blobs,
-		parsers: cfg.Parsers,
-		forges:  cfg.Forges,
-		baseURL: cfg.BaseURL,
-		log:     log,
-		tmpl:    tmpl,
-		mux:     http.NewServeMux(),
-		health:  cfg.Health,
+		store:        cfg.Store,
+		blobs:        cfg.Blobs,
+		parsers:      cfg.Parsers,
+		forges:       cfg.Forges,
+		baseURL:      cfg.BaseURL,
+		log:          log,
+		tmpl:         tmpl,
+		mux:          http.NewServeMux(),
+		health:       cfg.Health,
+		defaultCreds: cfg.DefaultForgeCredentials,
 	}
 	s.routes()
 	return s

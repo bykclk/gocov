@@ -19,6 +19,11 @@ services:
       DATABASE_URL: postgres://gocov:gocov@db:5432/gocov
       GOCOV_ADDR: ":8080"
       GOCOV_BASE_URL: "http://localhost:8080"
+      # Optional global Bitbucket bot account (e.g. from a .env file next
+      # to this compose file). Repos without credentials of their own use
+      # it for build statuses, PR comments and diff coverage.
+      GOCOV_BITBUCKET_USERNAME: ${GOCOV_BITBUCKET_USERNAME:-}
+      GOCOV_BITBUCKET_APP_PASSWORD: ${GOCOV_BITBUCKET_APP_PASSWORD:-}
     ports:
       - "8080:8080"
     healthcheck:

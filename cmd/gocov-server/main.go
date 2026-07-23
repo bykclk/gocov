@@ -6,9 +6,13 @@
 //	gocov-server repo rotate-token -slug workspace/repo
 //	gocov-server repo update -slug workspace/repo [flags]
 //	gocov-server repo remove -slug workspace/repo -force
+//	gocov-server workspace add -prefix workspace [flags]
+//	gocov-server workspace list|rotate-token|update|remove
 //
-// Configuration via environment: DATABASE_URL (required),
-// GOCOV_ADDR (default :8080), GOCOV_BASE_URL (default http://localhost:8080).
+// Configuration via environment: DATABASE_URL (required), GOCOV_ADDR
+// (default :8080), GOCOV_BASE_URL (default http://localhost:8080), and
+// optionally GOCOV_BITBUCKET_USERNAME / GOCOV_BITBUCKET_APP_PASSWORD for
+// a global bot account used by repos without their own credentials.
 package main
 
 import (
@@ -62,8 +66,16 @@ func run(args []string) error {
 		}
 		defer st.Pool().Close()
 		return repoCmd(ctx, st, blobpg.New(st.Pool()), args[1:], os.Stdout)
+	case "workspace":
+		ctx := context.Background()
+		st, err := connect(ctx)
+		if err != nil {
+			return err
+		}
+		defer st.Pool().Close()
+		return workspaceCmd(ctx, st, args[1:], os.Stdout)
 	default:
-		return fmt.Errorf("unknown command %q (want serve|repo)", args[0])
+		return fmt.Errorf("unknown command %q (want serve|repo|workspace)", args[0])
 	}
 }
 
@@ -97,6 +109,16 @@ func serve() error {
 	addr := envOr("GOCOV_ADDR", ":8080")
 	baseURL := envOr("GOCOV_BASE_URL", "http://localhost:8080")
 
+	defaultCreds := map[string]map[string]string{}
+	bbUser, bbPassword := os.Getenv("GOCOV_BITBUCKET_USERNAME"), os.Getenv("GOCOV_BITBUCKET_APP_PASSWORD")
+	switch {
+	case bbUser != "" && bbPassword != "":
+		defaultCreds["bitbucket"] = map[string]string{"username": bbUser, "app_password": bbPassword}
+		log.Info("global bitbucket credentials configured", "username", bbUser)
+	case bbUser != "" || bbPassword != "":
+		log.Warn("GOCOV_BITBUCKET_USERNAME and GOCOV_BITBUCKET_APP_PASSWORD must both be set; ignoring")
+	}
+
 	srv := server.New(server.Config{
 		Store:   st,
 		Blobs:   blobpg.New(st.Pool()),
@@ -105,6 +127,8 @@ func serve() error {
 		BaseURL: baseURL,
 		Logger:  log,
 		Health:  st.Pool().Ping,
+
+		DefaultForgeCredentials: defaultCreds,
 	})
 
 	httpSrv := &http.Server{

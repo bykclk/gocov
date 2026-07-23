@@ -3,6 +3,7 @@ package bitbucket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -114,6 +115,52 @@ func TestGetPRDiffHTTPError(t *testing.T) {
 	if _, err := c.GetPRDiff(context.Background(), "a/b", "1"); err == nil {
 		t.Error("want error on 404")
 	}
+}
+
+func TestGetDefaultBranch(t *testing.T) {
+	var gotPath string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"mainbranch": {"name": "development"}, "slug": "widgets"}`))
+	})
+	got, err := c.GetDefaultBranch(context.Background(), "acme/widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "development" {
+		t.Errorf("branch = %q", got)
+	}
+	if gotPath != "/repositories/acme/widgets" {
+		t.Errorf("path = %q", gotPath)
+	}
+}
+
+func TestGetDefaultBranchErrors(t *testing.T) {
+	t.Run("404 maps to ErrRepoNotFound", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "not found", http.StatusNotFound)
+		})
+		_, err := c.GetDefaultBranch(context.Background(), "a/ghost")
+		if !errors.Is(err, forge.ErrRepoNotFound) {
+			t.Errorf("err = %v, want ErrRepoNotFound", err)
+		}
+	})
+	t.Run("http error", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "nope", http.StatusForbidden)
+		})
+		if _, err := c.GetDefaultBranch(context.Background(), "a/b"); err == nil {
+			t.Error("want error on 403")
+		}
+	})
+	t.Run("missing mainbranch", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"slug": "b"}`))
+		})
+		if _, err := c.GetDefaultBranch(context.Background(), "a/b"); err == nil {
+			t.Error("want error when mainbranch is absent")
+		}
+	})
 }
 
 func TestFactoryValidation(t *testing.T) {

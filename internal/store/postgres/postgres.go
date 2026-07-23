@@ -193,6 +193,81 @@ func marshalCreds(creds map[string]string) ([]byte, error) {
 	return json.Marshal(creds)
 }
 
+const workspaceCols = `id, forge, prefix, token, default_branch, created_at`
+
+func (s *Store) CreateWorkspace(ctx context.Context, w *store.Workspace) error {
+	return s.pool.QueryRow(ctx, `
+		INSERT INTO workspaces (forge, prefix, token, default_branch)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at`,
+		w.Forge, w.Prefix, w.Token, w.DefaultBranch,
+	).Scan(&w.ID, &w.CreatedAt)
+}
+
+func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE workspaces SET forge = $2, prefix = $3, token = $4, default_branch = $5
+		WHERE id = $1`,
+		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) WorkspaceByPrefix(ctx context.Context, prefix string) (*store.Workspace, error) {
+	return s.scanWorkspace(s.pool.QueryRow(ctx,
+		`SELECT `+workspaceCols+` FROM workspaces WHERE prefix = $1`, prefix))
+}
+
+func (s *Store) WorkspaceByToken(ctx context.Context, token string) (*store.Workspace, error) {
+	return s.scanWorkspace(s.pool.QueryRow(ctx,
+		`SELECT `+workspaceCols+` FROM workspaces WHERE token = $1`, token))
+}
+
+func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+workspaceCols+` FROM workspaces ORDER BY prefix`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.Workspace
+	for rows.Next() {
+		w, err := s.scanWorkspace(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
+	var w store.Workspace
+	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch, &w.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &w, nil
+}
+
 func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*store.UploadFile) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

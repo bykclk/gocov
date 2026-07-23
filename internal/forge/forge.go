@@ -12,6 +12,10 @@ import (
 // support yet.
 var ErrNotImplemented = errors.New("forge: not implemented")
 
+// ErrRepoNotFound is returned when the forge reports that a repository
+// does not exist (e.g. a 404 while asking for its default branch).
+var ErrRepoNotFound = errors.New("forge: repository not found")
+
 // Build status states, mapped by each implementation to its native values.
 const (
 	StateSuccessful = "successful"
@@ -34,9 +38,11 @@ type Forge interface {
 	PostBuildStatus(ctx context.Context, repoSlug, commitSHA string, status BuildStatus) error
 	// PostPRComment adds a comment to a pull request.
 	PostPRComment(ctx context.Context, repoSlug, prID, body string) error
-	// GetPRDiff returns the unified diff of a pull request. Needed by the
-	// future diff-coverage engine; may return ErrNotImplemented.
+	// GetPRDiff returns the unified diff of a pull request.
 	GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error)
+	// GetDefaultBranch returns the repository's main branch name, used
+	// when auto-registering repos on first upload.
+	GetDefaultBranch(ctx context.Context, repoSlug string) (string, error)
 }
 
 // Factory builds a Forge from per-repo credentials (as stored in

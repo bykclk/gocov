@@ -30,10 +30,15 @@ type Forge struct {
 	CommentErr error  // returned by PostPRComment
 	DiffText   string // returned by GetPRDiff; empty means ErrNotImplemented
 	DiffErr    error  // returned by GetPRDiff when set
+	// DefaultBranch is returned by GetDefaultBranch; empty means
+	// ErrNotImplemented. DefaultBranchErr wins when set.
+	DefaultBranch    string
+	DefaultBranchErr error
 
-	StatusCalls  []StatusCall
-	CommentCalls []CommentCall
-	DiffCalls    []DiffCall
+	StatusCalls        []StatusCall
+	CommentCalls       []CommentCall
+	DiffCalls          []DiffCall
+	DefaultBranchCalls []string // repo slugs
 }
 
 // DiffCall records one GetPRDiff invocation.
@@ -71,6 +76,19 @@ func (f *Forge) PostPRComment(_ context.Context, repoSlug, prID, body string) er
 	}
 	f.CommentCalls = append(f.CommentCalls, CommentCall{repoSlug, prID, body})
 	return nil
+}
+
+func (f *Forge) GetDefaultBranch(_ context.Context, repoSlug string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.DefaultBranchCalls = append(f.DefaultBranchCalls, repoSlug)
+	if f.DefaultBranchErr != nil {
+		return "", f.DefaultBranchErr
+	}
+	if f.DefaultBranch == "" {
+		return "", forge.ErrNotImplemented
+	}
+	return f.DefaultBranch, nil
 }
 
 func (f *Forge) GetPRDiff(_ context.Context, repoSlug, prID string) (string, error) {

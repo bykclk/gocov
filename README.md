@@ -34,7 +34,22 @@ docker compose up
 This starts Postgres and the server on http://localhost:8080 (migrations
 apply automatically).
 
-Register a repo and get its upload token:
+### Onboarding a whole workspace (recommended)
+
+For many repos, register the workspace once and use a single token:
+
+```sh
+docker compose exec server gocov-server workspace add \
+  -prefix myworkspace -default-branch main
+```
+
+Set the printed token as a *Bitbucket workspace variable* (`GOCOV_TOKEN`,
+secured) together with `GOCOV_SERVER` — every repo inherits them. Repos
+register themselves on their first upload; their default branch is asked
+from Bitbucket when a global bot account is configured (see
+Configuration), falling back to the workspace's `-default-branch`.
+
+### Registering repos one by one
 
 ```sh
 docker compose exec server gocov-server repo add \
@@ -53,6 +68,7 @@ gocov-server repo update -slug myworkspace/myrepo \
                                                          # or -clear-credentials
 gocov-server repo remove -slug myworkspace/myrepo -force # deletes uploads and raw profiles too;
                                                          # without -force only prints a summary
+gocov-server workspace list|rotate-token|update|remove   # workspace token management
 ```
 
 ## Uploading coverage from CI
@@ -122,11 +138,18 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 
 ## Configuration
 
-| variable         | default                 |                             |
-|------------------|-------------------------|-----------------------------|
-| `DATABASE_URL`   | —                       | Postgres DSN (required)     |
-| `GOCOV_ADDR`     | `:8080`                 | listen address              |
-| `GOCOV_BASE_URL` | `http://localhost:8080` | public URL used in statuses |
+| variable                       | default                 |                             |
+|--------------------------------|-------------------------|-----------------------------|
+| `DATABASE_URL`                 | —                       | Postgres DSN (required)     |
+| `GOCOV_ADDR`                   | `:8080`                 | listen address              |
+| `GOCOV_BASE_URL`               | `http://localhost:8080` | public URL used in statuses |
+| `GOCOV_BITBUCKET_USERNAME`     | —                       | global Bitbucket bot account (with an API token, the account email) |
+| `GOCOV_BITBUCKET_APP_PASSWORD` | —                       | the bot's app password or scoped API token |
+
+The global bot account is used by every repo that has no credentials of
+its own — for build statuses, PR comments, diff coverage and default
+branch detection. Per-repo credentials (`repo update -bb-username ...`)
+take precedence.
 
 ## Development
 

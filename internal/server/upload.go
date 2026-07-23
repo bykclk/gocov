@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/bykclk/gocov/internal/diffcov"
@@ -28,6 +29,9 @@ type uploadResponse struct {
 	TotalStmts   int64    `json:"total_stmts"`
 	DeltaPct     *float64 `json:"delta_pct,omitempty"`
 	BuildStatus  string   `json:"build_status"` // "posted", "skipped" or "error: ..."
+	// RepoCreated reports that this upload auto-registered the repo
+	// through a workspace token.
+	RepoCreated bool `json:"repo_created,omitempty"`
 
 	// PR-only fields, set when pr_id was part of the upload.
 	DiffPct          *float64 `json:"diff_pct,omitempty"`
@@ -39,12 +43,20 @@ type uploadResponse struct {
 
 // handleUpload implements POST /api/v1/upload.
 //
-// Auth: Bearer <per-repo token>. Multipart form: file field "profile";
-// value fields repo (optional, must match the token's repo), commit
-// (required), branch (defaults to the repo's default branch), pr_id
-// (optional), format (default "go").
+// Auth: Bearer token — either a per-repo token or a workspace token.
+// With a workspace token the repo field is required; unknown repos under
+// the workspace prefix are registered automatically. Multipart form: file
+// field "profile"; value fields repo, commit (required), branch (defaults
+// to the repo's default branch), pr_id (optional), format (default "go").
 func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
-	repo, ok := s.authRepo(w, r)
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok || token == "" {
+		httpError(w, http.StatusUnauthorized, "missing bearer token")
+		return
+	}
+	// Authenticate before touching the body so invalid tokens cost a
+	// lookup, not a 64MB multipart parse.
+	authedRepo, ws, ok := s.lookupUploadToken(w, r, token)
 	if !ok {
 		return
 	}
@@ -55,8 +67,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if slug := r.FormValue("repo"); slug != "" && slug != repo.Slug {
-		httpError(w, http.StatusForbidden, "token is for repo %q, not %q", repo.Slug, slug)
+	repo, repoCreated, ok := s.resolveUploadRepo(w, r, authedRepo, ws, r.FormValue("repo"))
+	if !ok {
 		return
 	}
 	commit := r.FormValue("commit")
@@ -172,6 +184,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		TotalStmts:   total,
 		DeltaPct:     deltaPct,
 		BuildStatus:  s.pushBuildStatus(r.Context(), fg, fgErr, repo, upload, deltaPct),
+		RepoCreated:  repoCreated,
 		DiffStatus:   diffStatus,
 		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, upload, deltaPct),
 	}
@@ -186,17 +199,28 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// forgeFor builds a forge client from the repo's stored credentials.
-// Returns (nil, nil) when the repo has no credentials configured.
+// forgeFor builds a forge client from the repo's stored credentials,
+// falling back to the server-wide default credentials for the repo's
+// forge. Returns (nil, nil) when neither is configured.
 func (s *Server) forgeFor(repo *store.Repo) (forge.Forge, error) {
-	if len(repo.ForgeCredentials) == 0 {
+	creds := repo.ForgeCredentials
+	if len(creds) == 0 {
+		creds = s.defaultCreds[repo.Forge]
+	}
+	return s.forgeFromCreds(repo.Forge, creds)
+}
+
+// forgeFromCreds builds a forge client for the named forge with the given
+// credentials; (nil, nil) when there are no credentials.
+func (s *Server) forgeFromCreds(forgeName string, creds map[string]string) (forge.Forge, error) {
+	if len(creds) == 0 {
 		return nil, nil
 	}
-	factory, ok := s.forges[repo.Forge]
+	factory, ok := s.forges[forgeName]
 	if !ok {
-		return nil, fmt.Errorf("no integration for forge %q", repo.Forge)
+		return nil, fmt.Errorf("no integration for forge %q", forgeName)
 	}
-	return factory(repo.ForgeCredentials)
+	return factory(creds)
 }
 
 // sourceExt maps a profile format to the extension of source files whose
@@ -247,24 +271,139 @@ func (s *Server) computeDiffCoverage(ctx context.Context, fg forge.Forge, fgErr 
 	return result, "computed"
 }
 
-// authRepo resolves the Bearer token to a repo, writing the error response
-// itself when authentication fails.
-func (s *Server) authRepo(w http.ResponseWriter, r *http.Request) (*store.Repo, bool) {
-	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-	if !ok || token == "" {
-		httpError(w, http.StatusUnauthorized, "missing bearer token")
-		return nil, false
+// lookupUploadToken authenticates the Bearer token as either a per-repo
+// token or a workspace token, writing the error response itself. Runs
+// before the request body is parsed.
+func (s *Server) lookupUploadToken(w http.ResponseWriter, r *http.Request, token string) (*store.Repo, *store.Workspace, bool) {
+	ctx := r.Context()
+	repo, err := s.store.RepoByToken(ctx, token)
+	if err == nil {
+		return repo, nil, true
 	}
-	repo, err := s.store.RepoByToken(r.Context(), token)
+	if !errors.Is(err, store.ErrNotFound) {
+		s.internalError(w, "looking up token", err)
+		return nil, nil, false
+	}
+	ws, err := s.store.WorkspaceByToken(ctx, token)
+	if err == nil {
+		return nil, ws, true
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		httpError(w, http.StatusUnauthorized, "invalid token")
-		return nil, false
+		return nil, nil, false
+	}
+	s.internalError(w, "looking up workspace token", err)
+	return nil, nil, false
+}
+
+// repoNameRe bounds the repo part of auto-registered slugs: one path
+// segment, conservative charset, sane length.
+var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
+
+// resolveUploadRepo maps the authenticated token to the target repo,
+// writing the error response itself on failure. Workspace tokens require
+// the repo slug, must match the workspace prefix, and register unknown
+// repos on the fly.
+func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo *store.Repo, ws *store.Workspace, slug string) (_ *store.Repo, created, ok bool) {
+	ctx := r.Context()
+	if repo != nil {
+		if slug != "" && slug != repo.Slug {
+			httpError(w, http.StatusForbidden, "token is for repo %q, not %q", repo.Slug, slug)
+			return nil, false, false
+		}
+		return repo, false, true
+	}
+
+	if slug == "" {
+		httpError(w, http.StatusBadRequest, "workspace tokens require the repo field")
+		return nil, false, false
+	}
+	prefix, name, found := strings.Cut(slug, "/")
+	if !found || prefix != ws.Prefix {
+		httpError(w, http.StatusForbidden, "token is for workspace %q, not %q", ws.Prefix, slug)
+		return nil, false, false
+	}
+	if !repoNameRe.MatchString(name) {
+		httpError(w, http.StatusBadRequest, "invalid repo name %q: want %s/<name> with a single path segment", slug, ws.Prefix)
+		return nil, false, false
+	}
+
+	repo, err := s.store.RepoBySlug(ctx, slug)
+	if err == nil {
+		return repo, false, true
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		s.internalError(w, "looking up repo", err)
+		return nil, false, false
+	}
+	repo, err = s.autoCreateRepo(ctx, ws, slug)
+	if errors.Is(err, forge.ErrRepoNotFound) {
+		httpError(w, http.StatusNotFound, "repo %q not found on %s", slug, ws.Forge)
+		return nil, false, false
 	}
 	if err != nil {
-		s.internalError(w, "looking up token", err)
-		return nil, false
+		s.internalError(w, "auto-registering repo", err)
+		return nil, false, false
 	}
-	return repo, true
+	return repo, true, true
+}
+
+// autoCreateRepo registers a repo first seen through a workspace token.
+// The default branch is asked from the forge when a client can be built
+// (repo-less, so global credentials only), then falls back to the
+// workspace default and finally to "main". A forge that positively says
+// the repo does not exist aborts the registration (ErrRepoNotFound), so a
+// leaked workspace token cannot fill the dashboard with invented repos.
+func (s *Server) autoCreateRepo(ctx context.Context, ws *store.Workspace, slug string) (*store.Repo, error) {
+	branch := ""
+	if fg, err := s.forgeFromCreds(ws.Forge, s.defaultCreds[ws.Forge]); err == nil && fg != nil {
+		b, err := fg.GetDefaultBranch(ctx, slug)
+		switch {
+		case err == nil && b != "":
+			branch = b
+		case errors.Is(err, forge.ErrRepoNotFound):
+			return nil, err
+		case err != nil && !errors.Is(err, forge.ErrNotImplemented):
+			// Transient forge trouble must not block a legitimate first
+			// upload; fall back to the workspace default branch.
+			s.log.Warn("get default branch", "repo", slug, "err", err)
+		}
+	}
+	if branch == "" {
+		branch = ws.DefaultBranch
+	}
+	if branch == "" {
+		branch = "main"
+	}
+
+	token, err := newToken()
+	if err != nil {
+		return nil, err
+	}
+	repo := &store.Repo{
+		Forge:         ws.Forge,
+		Slug:          slug,
+		Token:         token,
+		DefaultBranch: branch,
+	}
+	if err := s.store.CreateRepo(ctx, repo); err != nil {
+		// A concurrent first upload may have won the race; use its repo.
+		if existing, lookupErr := s.store.RepoBySlug(ctx, slug); lookupErr == nil {
+			return existing, nil
+		}
+		return nil, err
+	}
+	s.log.Info("auto-registered repo", "slug", slug, "default_branch", branch, "workspace", ws.Prefix)
+	return repo, nil
+}
+
+// newToken generates an upload token for auto-registered repos.
+func newToken() (string, error) {
+	buf := make([]byte, 24)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 func (s *Server) storeRawProfile(r *http.Request, repoID int64, raw []byte) (string, error) {

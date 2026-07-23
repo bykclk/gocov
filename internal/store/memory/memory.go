@@ -3,6 +3,7 @@ package memory
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -12,26 +13,36 @@ import (
 
 // Store is an in-memory implementation of store.Store. Safe for concurrent use.
 type Store struct {
-	mu      sync.Mutex
-	repoSeq int64
-	upSeq   int64
-	repos   map[int64]*store.Repo
-	uploads map[int64]*store.Upload
-	files   map[int64][]*store.UploadFile // keyed by upload ID
+	mu         sync.Mutex
+	repoSeq    int64
+	upSeq      int64
+	wsSeq      int64
+	repos      map[int64]*store.Repo
+	uploads    map[int64]*store.Upload
+	files      map[int64][]*store.UploadFile // keyed by upload ID
+	workspaces map[int64]*store.Workspace
 }
 
 // New returns an empty in-memory store.
 func New() *Store {
 	return &Store{
-		repos:   map[int64]*store.Repo{},
-		uploads: map[int64]*store.Upload{},
-		files:   map[int64][]*store.UploadFile{},
+		repos:      map[int64]*store.Repo{},
+		uploads:    map[int64]*store.Upload{},
+		files:      map[int64][]*store.UploadFile{},
+		workspaces: map[int64]*store.Workspace{},
 	}
 }
 
 func (s *Store) CreateRepo(_ context.Context, r *store.Repo) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Mirror the Postgres UNIQUE constraints; autoCreateRepo's concurrent
+	// registration fallback relies on duplicate slugs failing.
+	for _, existing := range s.repos {
+		if existing.Slug == r.Slug || existing.Token == r.Token {
+			return fmt.Errorf("memory: repo slug or token already exists")
+		}
+	}
 	s.repoSeq++
 	r.ID = s.repoSeq
 	if r.CreatedAt.IsZero() {
@@ -117,6 +128,85 @@ func (s *Store) ListRepos(_ context.Context) ([]*store.Repo, error) {
 		out = append(out, &cp)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
+	return out, nil
+}
+
+func (s *Store) CreateWorkspace(_ context.Context, w *store.Workspace) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, existing := range s.workspaces {
+		if existing.Prefix == w.Prefix || existing.Token == w.Token {
+			return fmt.Errorf("memory: workspace prefix or token already exists")
+		}
+	}
+	s.wsSeq++
+	w.ID = s.wsSeq
+	if w.CreatedAt.IsZero() {
+		w.CreatedAt = time.Now()
+	}
+	cp := *w
+	s.workspaces[w.ID] = &cp
+	return nil
+}
+
+func (s *Store) UpdateWorkspace(_ context.Context, w *store.Workspace) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	existing, ok := s.workspaces[w.ID]
+	if !ok {
+		return store.ErrNotFound
+	}
+	cp := *w
+	if cp.CreatedAt.IsZero() {
+		cp.CreatedAt = existing.CreatedAt
+	}
+	s.workspaces[w.ID] = &cp
+	return nil
+}
+
+func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.workspaces[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(s.workspaces, id)
+	return nil
+}
+
+func (s *Store) WorkspaceByPrefix(_ context.Context, prefix string) (*store.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, w := range s.workspaces {
+		if w.Prefix == prefix {
+			cp := *w
+			return &cp, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (s *Store) WorkspaceByToken(_ context.Context, token string) (*store.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, w := range s.workspaces {
+		if w.Token == token {
+			cp := *w
+			return &cp, nil
+		}
+	}
+	return nil, store.ErrNotFound
+}
+
+func (s *Store) ListWorkspaces(_ context.Context) ([]*store.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*store.Workspace, 0, len(s.workspaces))
+	for _, w := range s.workspaces {
+		cp := *w
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out, nil
 }
 

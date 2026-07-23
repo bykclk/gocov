@@ -107,6 +107,74 @@ func TestRepoLifecycle(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLifecycle(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	w := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "development"}
+	if err := st.CreateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if w.ID == 0 || w.CreatedAt.IsZero() {
+		t.Fatalf("CreateWorkspace did not fill ID/CreatedAt: %+v", w)
+	}
+
+	for name, get := range map[string]func() (*store.Workspace, error){
+		"by prefix": func() (*store.Workspace, error) { return st.WorkspaceByPrefix(ctx, "acme") },
+		"by token":  func() (*store.Workspace, error) { return st.WorkspaceByToken(ctx, "ws-tok") },
+	} {
+		got, err := get()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.Prefix != "acme" || got.DefaultBranch != "development" {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
+
+	// Unique constraints.
+	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "other", DefaultBranch: "main"}); err == nil {
+		t.Error("duplicate prefix must fail")
+	}
+	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "ws-tok", DefaultBranch: "main"}); err == nil {
+		t.Error("duplicate token must fail")
+	}
+
+	// List is sorted by prefix.
+	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "aaa", Token: "tok-2", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := st.ListWorkspaces(ctx)
+	if err != nil || len(list) != 2 || list[0].Prefix != "aaa" || list[1].Prefix != "acme" {
+		t.Errorf("ListWorkspaces = %+v (err %v)", list, err)
+	}
+
+	// Update (rotation) and stale-token lookups.
+	w.Token = "ws-tok-2"
+	w.DefaultBranch = "trunk"
+	if err := st.UpdateWorkspace(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.WorkspaceByToken(ctx, "ws-tok"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("old token still resolves")
+	}
+	got, err := st.WorkspaceByPrefix(ctx, "acme")
+	if err != nil || got.Token != "ws-tok-2" || got.DefaultBranch != "trunk" {
+		t.Errorf("after update: %+v (err %v)", got, err)
+	}
+
+	// Delete; missing rows yield ErrNotFound.
+	if err := st.DeleteWorkspace(ctx, w.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteWorkspace(ctx, w.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second delete = %v", err)
+	}
+	if err := st.UpdateWorkspace(ctx, &store.Workspace{ID: 9999, Prefix: "x", Token: "y"}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("update missing = %v", err)
+	}
+}
+
 func TestUploadLifecycle(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
