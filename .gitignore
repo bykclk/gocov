@@ -2,3 +2,4 @@
 /gocov-server
 coverage.out
 *.test
+.env
