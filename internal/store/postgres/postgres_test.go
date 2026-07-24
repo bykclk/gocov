@@ -80,10 +80,13 @@ func TestRepoLifecycle(t *testing.T) {
 		t.Errorf("ListRepos = %v, %v", repos[0].Slug, repos[1].Slug)
 	}
 
-	// Update: branch change + credential clearing round-trips through JSONB.
+	// Update: branch change + credential clearing round-trips through JSONB,
+	// and nullable gate fields survive set/clear cycles.
+	minCov, maxDrop := 82.5, 0.0
 	repo.DefaultBranch = "develop"
 	repo.ForgeCredentials = nil
 	repo.Token = "tok-rotated"
+	repo.Gate = store.Gate{MinCoverage: &minCov, MaxCoverageDrop: &maxDrop}
 	if err := st.UpdateRepo(ctx, repo); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +96,18 @@ func TestRepoLifecycle(t *testing.T) {
 	}
 	if got.DefaultBranch != "develop" || got.ForgeCredentials != nil || got.Token != "tok-rotated" {
 		t.Errorf("after update: %+v", got)
+	}
+	if got.Gate.MinCoverage == nil || *got.Gate.MinCoverage != 82.5 ||
+		got.Gate.MaxCoverageDrop == nil || *got.Gate.MaxCoverageDrop != 0 ||
+		got.Gate.MinDiffCoverage != nil {
+		t.Errorf("gate round trip: %+v", got.Gate)
+	}
+	repo.Gate = store.Gate{}
+	if err := st.UpdateRepo(ctx, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = st.RepoByID(ctx, repo.ID); got.Gate.Configured() {
+		t.Errorf("gate not cleared: %+v", got.Gate)
 	}
 	if _, err := st.RepoByToken(ctx, "tok-1"); !errors.Is(err, store.ErrNotFound) {
 		t.Error("old token still resolves after rotation")
@@ -111,7 +126,11 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 
-	w := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "development"}
+	minDiff := 70.0
+	w := &store.Workspace{
+		Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "development",
+		Gate: store.Gate{MinDiffCoverage: &minDiff},
+	}
 	if err := st.CreateWorkspace(ctx, w); err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +148,9 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		}
 		if got.Prefix != "acme" || got.DefaultBranch != "development" {
 			t.Errorf("%s: %+v", name, got)
+		}
+		if got.Gate.MinDiffCoverage == nil || *got.Gate.MinDiffCoverage != 70 {
+			t.Errorf("%s gate: %+v", name, got.Gate)
 		}
 	}
 
@@ -266,6 +288,25 @@ func TestUploadLifecycle(t *testing.T) {
 	ups, err = st.ListUploads(ctx, repo.ID, 0)
 	if err != nil || len(ups) != 3 {
 		t.Errorf("unlimited list = %d uploads (err %v)", len(ups), err)
+	}
+
+	// Gate-failing uploads round-trip and are excluded from the passing
+	// baseline while still being the branch's latest upload.
+	failed := &store.Upload{
+		RepoID: repo.ID, CommitSHA: "c4", Branch: "main", Format: "go",
+		TotalPct: 10, CoveredStmts: 1, TotalStmts: 10, GateFailed: true,
+	}
+	if err := st.CreateUpload(ctx, failed, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := st.Upload(ctx, failed.ID); err != nil || !got.GateFailed {
+		t.Errorf("gate_failed round trip: %+v (err %v)", got, err)
+	}
+	if latest, err := st.LatestUpload(ctx, repo.ID, "main"); err != nil || latest.ID != failed.ID {
+		t.Errorf("LatestUpload = %v, %v (want the failed c4)", latest, err)
+	}
+	if passed, err := st.LatestPassedUpload(ctx, repo.ID, "main"); err != nil || passed.ID != u2.ID {
+		t.Errorf("LatestPassedUpload = %v, %v (want u2, skipping failed c4)", passed, err)
 	}
 
 	// DeleteRepo cascades to uploads and files.

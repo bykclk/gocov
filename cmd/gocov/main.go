@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/bykclk/gocov/internal/profile"
 )
@@ -43,6 +44,7 @@ func run(args []string) error {
 	pr := fs.String("pr", "", "pull request id (default: auto-detect)")
 	format := fs.String("format", "", "coverage profile format: go or lcov (default: detect from content)")
 	pathPrefix := fs.String("path-prefix", "", "prefix mapping profile paths to repo paths, e.g. the Go module path (default: from go.mod)")
+	failOnGate := fs.Bool("fail-on-gate", false, "exit with a non-zero code when the server reports a failed coverage gate")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -109,6 +111,12 @@ func run(args []string) error {
 	fmt.Printf("build status: %s\n", resp.BuildStatus)
 	if resp.PRComment != "" {
 		fmt.Printf("pr comment: %s\n", resp.PRComment)
+	}
+	if resp.Gate != "" {
+		fmt.Printf("gate: %s\n", resp.Gate)
+		if *failOnGate && strings.HasPrefix(resp.Gate, "failed") {
+			return fmt.Errorf("coverage gate %s", resp.Gate)
+		}
 	}
 	return nil
 }

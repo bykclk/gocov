@@ -240,6 +240,65 @@ func TestRepoUpdateValidation(t *testing.T) {
 	}
 }
 
+func TestRepoGateFlags(t *testing.T) {
+	ctx := context.Background()
+	st := storemem.New()
+	mustAdd(t, st, "-slug", "acme/widgets", "-min-coverage", "80", "-max-drop", "0.5")
+
+	r, err := st.RepoBySlug(ctx, "acme/widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Gate.MinCoverage == nil || *r.Gate.MinCoverage != 80 ||
+		r.Gate.MaxCoverageDrop == nil || *r.Gate.MaxCoverageDrop != 0.5 ||
+		r.Gate.MinDiffCoverage != nil {
+		t.Errorf("gate = %+v", r.Gate)
+	}
+
+	// Update one rule without touching the others.
+	if _, err := runRepoCmd(t, st, "update", "-slug", "acme/widgets", "-min-diff-coverage", "70"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = st.RepoBySlug(ctx, "acme/widgets")
+	if r.Gate.MinDiffCoverage == nil || *r.Gate.MinDiffCoverage != 70 ||
+		r.Gate.MinCoverage == nil || *r.Gate.MinCoverage != 80 {
+		t.Errorf("gate after update = %+v", r.Gate)
+	}
+
+	// The gate shows up in list output.
+	out, err := runRepoCmd(t, st, "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "total>=80%") || !strings.Contains(out, "diff>=70%") || !strings.Contains(out, "drop<=0.5%") {
+		t.Errorf("list output: %q", out)
+	}
+
+	// Clear removes all rules.
+	if _, err := runRepoCmd(t, st, "update", "-slug", "acme/widgets", "-clear-gate"); err != nil {
+		t.Fatal(err)
+	}
+	r, _ = st.RepoBySlug(ctx, "acme/widgets")
+	if r.Gate.Configured() {
+		t.Errorf("gate not cleared: %+v", r.Gate)
+	}
+
+	// Validation.
+	for _, args := range [][]string{
+		{"update", "-slug", "acme/widgets", "-min-coverage", "abc"},
+		{"update", "-slug", "acme/widgets", "-min-coverage", "150"},
+		{"update", "-slug", "acme/widgets", "-min-coverage", "NaN"},
+		{"update", "-slug", "acme/widgets", "-max-drop", "-1"},
+		{"update", "-slug", "acme/widgets", "-max-drop", "nan"},
+		{"update", "-slug", "acme/widgets", "-clear-gate", "-min-coverage", "50"},
+		{"add", "-slug", "x/y", "-min-diff-coverage", "101"},
+	} {
+		if _, err := runRepoCmd(t, st, args...); err == nil {
+			t.Errorf("want error for %v", args)
+		}
+	}
+}
+
 func TestRepoRemove(t *testing.T) {
 	ctx := context.Background()
 	st := storemem.New()

@@ -281,14 +281,26 @@ func (s *Store) UploadFiles(_ context.Context, uploadID int64) ([]*store.UploadF
 }
 
 func (s *Store) LatestUpload(_ context.Context, repoID int64, branch string) (*store.Upload, error) {
+	return s.latestUpload(repoID, branch, false)
+}
+
+func (s *Store) LatestPassedUpload(_ context.Context, repoID int64, branch string) (*store.Upload, error) {
+	return s.latestUpload(repoID, branch, true)
+}
+
+func (s *Store) latestUpload(repoID int64, branch string, passedOnly bool) (*store.Upload, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var latest *store.Upload
 	for _, u := range s.uploads {
-		if u.RepoID == repoID && u.Branch == branch {
-			if latest == nil || u.ID > latest.ID {
-				latest = u
-			}
+		if u.RepoID != repoID || u.Branch != branch {
+			continue
+		}
+		if passedOnly && u.GateFailed {
+			continue
+		}
+		if latest == nil || u.ID > latest.ID {
+			latest = u
 		}
 	}
 	if latest == nil {

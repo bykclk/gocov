@@ -103,6 +103,44 @@ func TestWorkspaceRotateToken(t *testing.T) {
 	}
 }
 
+func TestWorkspaceGateFlags(t *testing.T) {
+	ctx := context.Background()
+	st := storemem.New()
+	mustAddWorkspace(t, st, "-prefix", "acme", "-min-coverage", "75")
+
+	w, err := st.WorkspaceByPrefix(ctx, "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.Gate.MinCoverage == nil || *w.Gate.MinCoverage != 75 {
+		t.Errorf("gate = %+v", w.Gate)
+	}
+
+	if _, err := runWorkspaceCmd(t, st, "update", "-prefix", "acme", "-max-drop", "0"); err != nil {
+		t.Fatal(err)
+	}
+	w, _ = st.WorkspaceByPrefix(ctx, "acme")
+	if w.Gate.MaxCoverageDrop == nil || *w.Gate.MaxCoverageDrop != 0 || *w.Gate.MinCoverage != 75 {
+		t.Errorf("gate after update = %+v", w.Gate)
+	}
+
+	out, err := runWorkspaceCmd(t, st, "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "total>=75%") || !strings.Contains(out, "drop<=0%") {
+		t.Errorf("list output: %q", out)
+	}
+
+	if _, err := runWorkspaceCmd(t, st, "update", "-prefix", "acme", "-clear-gate"); err != nil {
+		t.Fatal(err)
+	}
+	w, _ = st.WorkspaceByPrefix(ctx, "acme")
+	if w.Gate.Configured() {
+		t.Errorf("gate not cleared: %+v", w.Gate)
+	}
+}
+
 func TestWorkspaceUpdateAndRemove(t *testing.T) {
 	ctx := context.Background()
 	st := storemem.New()

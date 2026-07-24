@@ -20,6 +20,9 @@ format is detected from the uploaded content.
   variables and falls back to git
 - Pushes a `coverage: X% (±Y%)` build status to Bitbucket commits when
   the repo has an app password configured
+- Coverage gate: per-repo minimums for total and diff coverage plus a
+  drop tolerance; violations push a FAILED build status, so a Bitbucket
+  merge check can block the PR
 - Diff coverage for pull requests: fetches the PR diff from Bitbucket,
   intersects changed lines with coverage blocks, and posts a PR comment
   listing uncovered changed lines — repeated uploads update the same
@@ -76,6 +79,27 @@ gocov-server repo remove -slug myworkspace/myrepo -force # deletes uploads and r
                                                          # without -force only prints a summary
 gocov-server workspace list|rotate-token|update|remove   # workspace token management
 ```
+
+### Coverage gate
+
+```sh
+gocov-server repo update -slug myworkspace/myrepo \
+  -min-coverage 80 -min-diff-coverage 70 -max-drop 0.5
+```
+
+Each rule is optional: `-min-coverage` is the minimum total percentage,
+`-min-diff-coverage` applies to the changed lines of PR uploads (skipped
+when no diff coverage is available), and `-max-drop` bounds how far
+total coverage may fall below the latest gate-passing upload on the
+default branch (0 forbids any drop). Gate-failing uploads are recorded
+but never serve as a baseline, so re-running CI cannot launder a failure
+and a PR cannot ratchet coverage down push by push. Violations mark the
+pushed build status FAILED — require the `gocov` build in Bitbucket's
+merge checks to block such PRs — and are reported in the PR comment and
+the upload response (`gate` field). `-clear-gate` removes all rules. The
+same flags on `workspace add` and `workspace update` set defaults
+inherited by auto-registered repos. The CLI exits non-zero on a failed
+gate when run with `-fail-on-gate`.
 
 ## Uploading coverage from CI
 

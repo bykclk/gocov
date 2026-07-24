@@ -33,12 +33,59 @@ type uploadResponse struct {
 	// through a workspace token.
 	RepoCreated bool `json:"repo_created,omitempty"`
 
+	// Gate reports the coverage-gate outcome: "passed" or
+	// "failed: <reasons>". Omitted when the repo has no gate configured.
+	Gate string `json:"gate,omitempty"`
+
 	// PR-only fields, set when pr_id was part of the upload.
 	DiffPct          *float64 `json:"diff_pct,omitempty"`
 	DiffCoveredLines *int64   `json:"diff_covered_lines,omitempty"`
 	DiffTotalLines   *int64   `json:"diff_total_lines,omitempty"`
 	DiffStatus       string   `json:"diff_status,omitempty"` // "computed", "skipped: ..." or "error: ..."
-	PRComment        string   `json:"pr_comment,omitempty"`  // "posted", "skipped" or "error: ..."
+	PRComment        string   `json:"pr_comment,omitempty"`  // "posted", "updated", "skipped" or "error: ..."
+}
+
+// gateResult is the evaluated coverage gate for one upload.
+type gateResult struct {
+	configured bool
+	failures   []string
+}
+
+func (g gateResult) failed() bool { return len(g.failures) > 0 }
+
+func (g gateResult) String() string {
+	if g.failed() {
+		return "failed: " + strings.Join(g.failures, "; ")
+	}
+	return "passed"
+}
+
+// gateEpsilon absorbs float64 division error so coverage exactly at the
+// configured threshold never fails the gate (57 of 100 statements is
+// 56.999999999999993 in float arithmetic).
+const gateEpsilon = 1e-9
+
+// evaluateGate checks the repo's coverage requirements. dropDelta is the
+// difference to the latest gate-passing upload on the default branch —
+// never a gate-failing upload, so re-running CI cannot launder a failure,
+// and never the branch's own history, so a PR cannot ratchet coverage
+// down within tolerance push by push. The drop and diff rules are
+// fail-open when their inputs are unavailable.
+func evaluateGate(gate store.Gate, totalPct float64, dropDelta *float64, diff *diffcov.Result) gateResult {
+	res := gateResult{configured: gate.Configured()}
+	if gate.MinCoverage != nil && totalPct < *gate.MinCoverage-gateEpsilon {
+		res.failures = append(res.failures,
+			fmt.Sprintf("total coverage %.4g%% is below the minimum %.4g%%", totalPct, *gate.MinCoverage))
+	}
+	if gate.MaxCoverageDrop != nil && dropDelta != nil && *dropDelta < -*gate.MaxCoverageDrop-gateEpsilon {
+		res.failures = append(res.failures,
+			fmt.Sprintf("coverage dropped %.4g%% (allowed %.4g%%)", -*dropDelta, *gate.MaxCoverageDrop))
+	}
+	if gate.MinDiffCoverage != nil && diff != nil && diff.TotalLines > 0 && diff.Percent() < *gate.MinDiffCoverage-gateEpsilon {
+		res.failures = append(res.failures,
+			fmt.Sprintf("diff coverage %.4g%% is below the minimum %.4g%%", diff.Percent(), *gate.MinDiffCoverage))
+	}
+	return res
 }
 
 // handleUpload implements POST /api/v1/upload.
@@ -119,12 +166,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	covered, total := prof.Coverage()
 	totalPct := profile.Percent(covered, total)
 
-	// Delta vs the previous upload on the same branch, falling back to the
-	// default branch for first-time feature branches.
+	// Delta vs the previous gate-passing upload on the same branch,
+	// falling back to the default branch for first-time feature branches.
+	// Gate-failing uploads never serve as a baseline.
 	var deltaPct *float64
-	prev, err := s.store.LatestUpload(r.Context(), repo.ID, branch)
+	prev, err := s.store.LatestPassedUpload(r.Context(), repo.ID, branch)
 	if errors.Is(err, store.ErrNotFound) && branch != repo.DefaultBranch {
-		prev, err = s.store.LatestUpload(r.Context(), repo.ID, repo.DefaultBranch)
+		prev, err = s.store.LatestPassedUpload(r.Context(), repo.ID, repo.DefaultBranch)
 	}
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.internalError(w, "loading previous upload", err)
@@ -133,6 +181,21 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if prev != nil {
 		d := totalPct - prev.TotalPct
 		deltaPct = &d
+	}
+
+	// The gate's drop rule always compares against the default branch, so
+	// a PR cannot lower coverage step by step within tolerance.
+	var dropDelta *float64
+	if repo.Gate.MaxCoverageDrop != nil {
+		base, err := s.store.LatestPassedUpload(r.Context(), repo.ID, repo.DefaultBranch)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.internalError(w, "loading gate baseline", err)
+			return
+		}
+		if base != nil {
+			d := totalPct - base.TotalPct
+			dropDelta = &d
+		}
 	}
 
 	blobKey, err := s.storeRawProfile(r, repo.ID, raw)
@@ -151,6 +214,8 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		diffResult, diffStatus = s.computeDiffCoverage(r.Context(), fg, fgErr, repo, prID, prof, format, r.FormValue("path_prefix"))
 	}
 
+	gate := evaluateGate(repo.Gate, totalPct, dropDelta, diffResult)
+
 	upload := &store.Upload{
 		RepoID:       repo.ID,
 		CommitSHA:    commit,
@@ -162,6 +227,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		TotalStmts:   total,
 		RawBlobKey:   blobKey,
 		DiffCoverage: diffResult,
+		GateFailed:   gate.failed(),
 	}
 	files := make([]*store.UploadFile, 0, len(prof.Files))
 	for i := range prof.Files {
@@ -190,10 +256,13 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		CoveredStmts: covered,
 		TotalStmts:   total,
 		DeltaPct:     deltaPct,
-		BuildStatus:  s.pushBuildStatus(r.Context(), fg, fgErr, repo, upload, deltaPct),
+		BuildStatus:  s.pushBuildStatus(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
 		RepoCreated:  repoCreated,
 		DiffStatus:   diffStatus,
-		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, upload, deltaPct),
+		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
+	}
+	if gate.configured {
+		resp.Gate = gate.String()
 	}
 	if diffResult != nil {
 		pct := diffResult.Percent()
@@ -400,6 +469,7 @@ func (s *Server) autoCreateRepo(ctx context.Context, ws *store.Workspace, slug s
 		Slug:          slug,
 		Token:         token,
 		DefaultBranch: branch,
+		Gate:          ws.Gate,
 	}
 	if err := s.store.CreateRepo(ctx, repo); err != nil {
 		// A concurrent first upload may have won the race; use its repo.
@@ -434,9 +504,10 @@ func (s *Server) storeRawProfile(r *http.Request, repoID int64, raw []byte) (str
 }
 
 // pushBuildStatus posts a "coverage: X% (±Y)" build status to the repo's
-// forge. Best effort: failures are reported in the response but do not fail
-// the upload.
-func (s *Server) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64) string {
+// forge; a failed coverage gate turns the state into FAILED so the forge
+// can block the merge. Best effort: push failures are reported in the
+// response but do not fail the upload.
+func (s *Server) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
 	if fgErr != nil {
 		return "error: " + fgErr.Error()
 	}
@@ -448,9 +519,15 @@ func (s *Server) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr erro
 	if deltaPct != nil {
 		desc += fmt.Sprintf(" (%+.1f%%)", *deltaPct)
 	}
+	state := forge.StateSuccessful
+	if gate.failed() {
+		state = forge.StateFailed
+		// Forge description fields are short; one reason has to do.
+		desc += " — " + gate.failures[0]
+	}
 	status := forge.BuildStatus{
 		Key:         "gocov/coverage",
-		State:       forge.StateSuccessful,
+		State:       state,
 		Name:        "gocov",
 		Description: desc,
 		URL:         s.uploadURL(u),
@@ -470,7 +547,7 @@ const prCommentMarker = "**gocov**"
 // pushPRComment posts or updates the coverage summary comment on the pull
 // request. Returns "" for non-PR uploads so the field is omitted from the
 // response.
-func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64) string {
+func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
 	if u.PRID == "" {
 		return ""
 	}
@@ -480,7 +557,7 @@ func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error,
 	if fg == nil {
 		return "skipped"
 	}
-	body := s.prCommentBody(u, deltaPct)
+	body := s.prCommentBody(u, deltaPct, gate)
 
 	// Best effort update-in-place: any failure falls back to posting a
 	// fresh comment, which is never worse than the old behavior.
@@ -506,7 +583,7 @@ func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error,
 // prCommentMaxFiles caps the uncovered-lines table in PR comments.
 const prCommentMaxFiles = 20
 
-func (s *Server) prCommentBody(u *store.Upload, deltaPct *float64) string {
+func (s *Server) prCommentBody(u *store.Upload, deltaPct *float64, gate gateResult) string {
 	var sb strings.Builder
 	short := u.CommitSHA
 	if len(short) > 12 {
@@ -518,6 +595,13 @@ func (s *Server) prCommentBody(u *store.Upload, deltaPct *float64) string {
 		fmt.Fprintf(&sb, " (%+.1f%%)", *deltaPct)
 	}
 	sb.WriteString("\n")
+	if gate.configured {
+		if gate.failed() {
+			fmt.Fprintf(&sb, "- Gate: ❌ %s\n", strings.Join(gate.failures, "; "))
+		} else {
+			sb.WriteString("- Gate: ✅ passed\n")
+		}
+	}
 
 	if dc := u.DiffCoverage; dc != nil {
 		if dc.TotalLines == 0 {

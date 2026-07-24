@@ -93,10 +93,12 @@ func (s *Store) CreateRepo(ctx context.Context, r *store.Repo) error {
 		return err
 	}
 	return s.pool.QueryRow(ctx, `
-		INSERT INTO repos (forge, slug, token, default_branch, forge_credentials)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO repos (forge, slug, token, default_branch, forge_credentials,
+			min_coverage, min_diff_coverage, max_coverage_drop)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at`,
 		r.Forge, r.Slug, r.Token, r.DefaultBranch, creds,
+		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop,
 	).Scan(&r.ID, &r.CreatedAt)
 }
 
@@ -107,9 +109,11 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE repos SET forge = $2, slug = $3, token = $4,
-			default_branch = $5, forge_credentials = $6
+			default_branch = $5, forge_credentials = $6,
+			min_coverage = $7, min_diff_coverage = $8, max_coverage_drop = $9
 		WHERE id = $1`,
-		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch, creds)
+		r.ID, r.Forge, r.Slug, r.Token, r.DefaultBranch, creds,
+		r.Gate.MinCoverage, r.Gate.MinDiffCoverage, r.Gate.MaxCoverageDrop)
 	if err != nil {
 		return err
 	}
@@ -119,7 +123,8 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	return nil
 }
 
-const repoCols = `id, forge, slug, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb), created_at`
+const repoCols = `id, forge, slug, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb),
+	min_coverage, min_diff_coverage, max_coverage_drop, created_at`
 
 func (s *Store) DeleteRepo(ctx context.Context, id int64) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM repos WHERE id = $1`, id)
@@ -171,7 +176,8 @@ type rowScanner interface {
 func (s *Store) scanRepo(row rowScanner) (*store.Repo, error) {
 	var r store.Repo
 	var creds []byte
-	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch, &creds, &r.CreatedAt)
+	err := row.Scan(&r.ID, &r.Forge, &r.Slug, &r.Token, &r.DefaultBranch, &creds,
+		&r.Gate.MinCoverage, &r.Gate.MinDiffCoverage, &r.Gate.MaxCoverageDrop, &r.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -193,22 +199,27 @@ func marshalCreds(creds map[string]string) ([]byte, error) {
 	return json.Marshal(creds)
 }
 
-const workspaceCols = `id, forge, prefix, token, default_branch, created_at`
+const workspaceCols = `id, forge, prefix, token, default_branch,
+	min_coverage, min_diff_coverage, max_coverage_drop, created_at`
 
 func (s *Store) CreateWorkspace(ctx context.Context, w *store.Workspace) error {
 	return s.pool.QueryRow(ctx, `
-		INSERT INTO workspaces (forge, prefix, token, default_branch)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO workspaces (forge, prefix, token, default_branch,
+			min_coverage, min_diff_coverage, max_coverage_drop)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at`,
 		w.Forge, w.Prefix, w.Token, w.DefaultBranch,
+		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
 	).Scan(&w.ID, &w.CreatedAt)
 }
 
 func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE workspaces SET forge = $2, prefix = $3, token = $4, default_branch = $5
+		UPDATE workspaces SET forge = $2, prefix = $3, token = $4, default_branch = $5,
+			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8
 		WHERE id = $1`,
-		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch)
+		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch,
+		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop)
 	if err != nil {
 		return err
 	}
@@ -258,7 +269,8 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) 
 
 func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	var w store.Workspace
-	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch, &w.CreatedAt)
+	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch,
+		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop, &w.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
@@ -283,11 +295,11 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO uploads (repo_id, commit_sha, branch, pr_id, format,
-			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at`,
 		u.RepoID, u.CommitSHA, u.Branch, u.PRID, u.Format,
-		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov,
+		u.TotalPct, u.CoveredStmts, u.TotalStmts, u.RawBlobKey, diffCov, u.GateFailed,
 	).Scan(&u.ID, &u.CreatedAt)
 	if err != nil {
 		return err
@@ -311,7 +323,7 @@ func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*stor
 }
 
 const uploadCols = `id, repo_id, commit_sha, branch, pr_id, format,
-	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, created_at`
+	total_pct, covered_stmts, total_stmts, raw_blob_key, diff_coverage, gate_failed, created_at`
 
 func (s *Store) Upload(ctx context.Context, id int64) (*store.Upload, error) {
 	return s.scanUpload(s.pool.QueryRow(ctx,
@@ -349,11 +361,19 @@ func (s *Store) LatestUpload(ctx context.Context, repoID int64, branch string) (
 		repoID, branch))
 }
 
+func (s *Store) LatestPassedUpload(ctx context.Context, repoID int64, branch string) (*store.Upload, error) {
+	return s.scanUpload(s.pool.QueryRow(ctx,
+		`SELECT `+uploadCols+` FROM uploads
+		 WHERE repo_id = $1 AND branch = $2 AND NOT gate_failed
+		 ORDER BY id DESC LIMIT 1`,
+		repoID, branch))
+}
+
 func (s *Store) scanUpload(row rowScanner) (*store.Upload, error) {
 	var u store.Upload
 	var diffCov []byte
 	err := row.Scan(&u.ID, &u.RepoID, &u.CommitSHA, &u.Branch, &u.PRID, &u.Format,
-		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.CreatedAt)
+		&u.TotalPct, &u.CoveredStmts, &u.TotalStmts, &u.RawBlobKey, &diffCov, &u.GateFailed, &u.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}

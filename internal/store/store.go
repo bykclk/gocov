@@ -14,6 +14,24 @@ import (
 // ErrNotFound is returned when a requested record does not exist.
 var ErrNotFound = errors.New("store: not found")
 
+// Gate holds the optional coverage requirements enforced on uploads.
+// A nil field means that rule is not applied.
+type Gate struct {
+	// MinCoverage is the minimum acceptable total coverage percentage.
+	MinCoverage *float64
+	// MinDiffCoverage is the minimum acceptable diff coverage percentage
+	// for PR uploads with executable changed lines.
+	MinDiffCoverage *float64
+	// MaxCoverageDrop is how many percentage points total coverage may
+	// fall relative to the comparison baseline; 0 forbids any drop.
+	MaxCoverageDrop *float64
+}
+
+// Configured reports whether any gate rule is set.
+func (g Gate) Configured() bool {
+	return g.MinCoverage != nil || g.MinDiffCoverage != nil || g.MaxCoverageDrop != nil
+}
+
 // Workspace groups repos under a slug prefix ("workspace" in
 // "workspace/repo"). Its token authorizes uploads for every repo with
 // that prefix; unknown repos are auto-registered on first upload.
@@ -25,7 +43,9 @@ type Workspace struct {
 	// DefaultBranch is assigned to auto-created repos when the forge
 	// cannot be asked for the real one.
 	DefaultBranch string
-	CreatedAt     time.Time
+	// Gate is copied to auto-created repos at registration time.
+	Gate      Gate
+	CreatedAt time.Time
 }
 
 // Repo is a tracked repository. Slug is namespaced ("workspace/repo").
@@ -38,7 +58,10 @@ type Repo struct {
 	// ForgeCredentials holds forge-specific secrets (e.g. bitbucket
 	// username/app_password). Nil or empty when not configured.
 	ForgeCredentials map[string]string
-	CreatedAt        time.Time
+	// Gate holds the repo's coverage requirements; violations turn the
+	// pushed build status into a failure.
+	Gate      Gate
+	CreatedAt time.Time
 }
 
 // Upload is one coverage report for a commit.
@@ -56,7 +79,10 @@ type Upload struct {
 	// DiffCoverage is set for PR uploads when the PR diff could be
 	// fetched from the forge; nil otherwise.
 	DiffCoverage *diffcov.Result
-	CreatedAt    time.Time
+	// GateFailed marks uploads that violated the coverage gate; they are
+	// excluded from comparison baselines.
+	GateFailed bool
+	CreatedAt  time.Time
 }
 
 // UploadFile is per-file coverage within an upload. Blocks keep the full
@@ -102,4 +128,7 @@ type Store interface {
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
 	// LatestUpload returns the most recent upload for a branch.
 	LatestUpload(ctx context.Context, repoID int64, branch string) (*Upload, error)
+	// LatestPassedUpload returns the most recent upload for a branch that
+	// did not fail the coverage gate; used as a comparison baseline.
+	LatestPassedUpload(ctx context.Context, repoID int64, branch string) (*Upload, error)
 }

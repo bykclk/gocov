@@ -50,11 +50,16 @@ func workspaceAdd(ctx context.Context, st store.Store, args []string, out io.Wri
 	prefix := fs.String("prefix", "", "workspace part of repo slugs, e.g. myworkspace (required)")
 	forgeName := fs.String("forge", "bitbucket", "forge for auto-registered repos")
 	defaultBranch := fs.String("default-branch", "main", "default branch for auto-registered repos when the forge cannot be asked")
+	gf := addGateFlags(fs)
 	if stop, err := parseFlags(fs, args); stop {
 		return err
 	}
 	if *prefix == "" {
 		return fmt.Errorf("-prefix is required")
+	}
+	var gate store.Gate
+	if _, err := gf.apply(&gate); err != nil {
+		return err
 	}
 	token, err := newToken()
 	if err != nil {
@@ -65,6 +70,7 @@ func workspaceAdd(ctx context.Context, st store.Store, args []string, out io.Wri
 		Prefix:        *prefix,
 		Token:         token,
 		DefaultBranch: *defaultBranch,
+		Gate:          gate,
 	}
 	if err := st.CreateWorkspace(ctx, w); err != nil {
 		return fmt.Errorf("creating workspace: %w", err)
@@ -89,10 +95,10 @@ func workspaceList(ctx context.Context, st store.Store, args []string, out io.Wr
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "PREFIX\tFORGE\tDEFAULT BRANCH\tCREATED")
+	fmt.Fprintln(tw, "PREFIX\tFORGE\tDEFAULT BRANCH\tGATE\tCREATED")
 	for _, w := range workspaces {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
-			w.Prefix, w.Forge, w.DefaultBranch, w.CreatedAt.Format("2006-01-02"))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			w.Prefix, w.Forge, w.DefaultBranch, gateSummary(w.Gate), w.CreatedAt.Format("2006-01-02"))
 	}
 	return tw.Flush()
 }
@@ -127,24 +133,39 @@ func workspaceUpdate(ctx context.Context, st store.Store, args []string, out io.
 	fs := newFlagSet("workspace update", out)
 	prefix := fs.String("prefix", "", "workspace prefix (required)")
 	defaultBranch := fs.String("default-branch", "", "new default branch for auto-registered repos")
+	gf := addGateFlags(fs)
+	clearGate := fs.Bool("clear-gate", false, "remove all coverage gate rules")
 	if stop, err := parseFlags(fs, args); stop {
 		return err
 	}
 	if *prefix == "" {
 		return fmt.Errorf("-prefix is required")
 	}
-	if *defaultBranch == "" {
-		return fmt.Errorf("nothing to update: pass -default-branch")
-	}
 	w, err := st.WorkspaceByPrefix(ctx, *prefix)
 	if err != nil {
 		return fmt.Errorf("loading workspace %s: %w", *prefix, err)
 	}
-	w.DefaultBranch = *defaultBranch
+	gateChanged, err := gf.apply(&w.Gate)
+	if err != nil {
+		return err
+	}
+	if *clearGate && gateChanged {
+		return fmt.Errorf("-clear-gate cannot be combined with gate flags")
+	}
+	if *defaultBranch == "" && !gateChanged && !*clearGate {
+		return fmt.Errorf("nothing to update: pass -default-branch or gate flags")
+	}
+	if *defaultBranch != "" {
+		w.DefaultBranch = *defaultBranch
+	}
+	if *clearGate {
+		w.Gate = store.Gate{}
+	}
 	if err := st.UpdateWorkspace(ctx, w); err != nil {
 		return fmt.Errorf("updating workspace %s: %w", *prefix, err)
 	}
 	fmt.Fprintf(out, "workspace %s updated\n", w.Prefix)
+	fmt.Fprintln(out, "note: gate and branch defaults apply to repos registered from now on")
 	return nil
 }
 

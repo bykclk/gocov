@@ -8,6 +8,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/bykclk/gocov/internal/blobstore"
@@ -85,6 +88,66 @@ func newToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+// gateFlags carries the coverage-gate flags shared by the repo and
+// workspace commands. Empty values leave the gate untouched, so update
+// commands can change one rule without resetting the others.
+type gateFlags struct {
+	minCoverage     *string
+	minDiffCoverage *string
+	maxDrop         *string
+}
+
+func addGateFlags(fs *flag.FlagSet) gateFlags {
+	return gateFlags{
+		minCoverage:     fs.String("min-coverage", "", "gate: minimum total coverage percent, e.g. 80"),
+		minDiffCoverage: fs.String("min-diff-coverage", "", "gate: minimum diff coverage percent for PR uploads"),
+		maxDrop:         fs.String("max-drop", "", "gate: max allowed total-coverage drop in points; 0 forbids any drop"),
+	}
+}
+
+// apply parses the provided flags into g; returns whether anything was set.
+func (f gateFlags) apply(g *store.Gate) (bool, error) {
+	changed := false
+	for _, item := range []struct {
+		name  string
+		value string
+		dst   **float64
+	}{
+		{"min-coverage", *f.minCoverage, &g.MinCoverage},
+		{"min-diff-coverage", *f.minDiffCoverage, &g.MinDiffCoverage},
+		{"max-drop", *f.maxDrop, &g.MaxCoverageDrop},
+	} {
+		if item.value == "" {
+			continue
+		}
+		v, err := strconv.ParseFloat(item.value, 64)
+		if err != nil || math.IsNaN(v) || v < 0 || v > 100 {
+			return false, fmt.Errorf("-%s must be a percentage between 0 and 100", item.name)
+		}
+		*item.dst = &v
+		changed = true
+	}
+	return changed, nil
+}
+
+// gateSummary renders a gate for list output, e.g. "total>=80% drop<=0.5%".
+func gateSummary(g store.Gate) string {
+	var parts []string
+	if g.MinCoverage != nil {
+		parts = append(parts, fmt.Sprintf("total>=%.4g%%", *g.MinCoverage))
+	}
+	if g.MinDiffCoverage != nil {
+		parts = append(parts, fmt.Sprintf("diff>=%.4g%%", *g.MinDiffCoverage))
+	}
+	if g.MaxCoverageDrop != nil {
+		parts = append(parts, fmt.Sprintf("drop<=%.4g%%", *g.MaxCoverageDrop))
+	}
+	if len(parts) == 0 {
+		return "-"
+	}
+	return strings.Join(parts, " ")
+}
+
 // bbCreds validates the Bitbucket credential flag pair and returns the
 // credentials map, or nil when both flags are empty.
 func bbCreds(username, password string) (map[string]string, error) {
@@ -104,6 +167,7 @@ func repoAdd(ctx context.Context, st store.Store, args []string, out io.Writer) 
 	defaultBranch := fs.String("default-branch", "main", "default branch")
 	bbUser := fs.String("bb-username", "", "Bitbucket username for build status pushes (optional)")
 	bbPassword := fs.String("bb-app-password", "", "Bitbucket app password (optional)")
+	gf := addGateFlags(fs)
 	if stop, err := parseFlags(fs, args); stop {
 		return err
 	}
@@ -112,6 +176,10 @@ func repoAdd(ctx context.Context, st store.Store, args []string, out io.Writer) 
 	}
 	creds, err := bbCreds(*bbUser, *bbPassword)
 	if err != nil {
+		return err
+	}
+	var gate store.Gate
+	if _, err := gf.apply(&gate); err != nil {
 		return err
 	}
 	token, err := newToken()
@@ -125,6 +193,7 @@ func repoAdd(ctx context.Context, st store.Store, args []string, out io.Writer) 
 		Token:            token,
 		DefaultBranch:    *defaultBranch,
 		ForgeCredentials: creds,
+		Gate:             gate,
 	}
 	if err := st.CreateRepo(ctx, r); err != nil {
 		return fmt.Errorf("creating repo: %w", err)
@@ -147,14 +216,14 @@ func repoList(ctx context.Context, st store.Store, args []string, out io.Writer)
 		return nil
 	}
 	tw := tabwriter.NewWriter(out, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "SLUG\tFORGE\tDEFAULT BRANCH\tCREDENTIALS\tCREATED")
+	fmt.Fprintln(tw, "SLUG\tFORGE\tDEFAULT BRANCH\tCREDENTIALS\tGATE\tCREATED")
 	for _, r := range repos {
 		creds := "-"
 		if len(r.ForgeCredentials) > 0 {
 			creds = "set"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
-			r.Slug, r.Forge, r.DefaultBranch, creds, r.CreatedAt.Format("2006-01-02"))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+			r.Slug, r.Forge, r.DefaultBranch, creds, gateSummary(r.Gate), r.CreatedAt.Format("2006-01-02"))
 	}
 	return tw.Flush()
 }
@@ -192,6 +261,8 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 	bbUser := fs.String("bb-username", "", "Bitbucket username")
 	bbPassword := fs.String("bb-app-password", "", "Bitbucket app password")
 	clearCreds := fs.Bool("clear-credentials", false, "remove stored forge credentials")
+	gf := addGateFlags(fs)
+	clearGate := fs.Bool("clear-gate", false, "remove all coverage gate rules")
 	if stop, err := parseFlags(fs, args); stop {
 		return err
 	}
@@ -205,13 +276,20 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 	if *clearCreds && creds != nil {
 		return fmt.Errorf("-clear-credentials cannot be combined with -bb-username/-bb-app-password")
 	}
-	if *defaultBranch == "" && creds == nil && !*clearCreds {
-		return fmt.Errorf("nothing to update: pass -default-branch, -bb-username/-bb-app-password or -clear-credentials")
-	}
 
 	r, err := st.RepoBySlug(ctx, *slug)
 	if err != nil {
 		return fmt.Errorf("loading repo %s: %w", *slug, err)
+	}
+	gateChanged, err := gf.apply(&r.Gate)
+	if err != nil {
+		return err
+	}
+	if *clearGate && gateChanged {
+		return fmt.Errorf("-clear-gate cannot be combined with gate flags")
+	}
+	if *defaultBranch == "" && creds == nil && !*clearCreds && !gateChanged && !*clearGate {
+		return fmt.Errorf("nothing to update: pass -default-branch, credential or gate flags")
 	}
 	if *defaultBranch != "" {
 		r.DefaultBranch = *defaultBranch
@@ -221,6 +299,9 @@ func repoUpdate(ctx context.Context, st store.Store, args []string, out io.Write
 	}
 	if *clearCreds {
 		r.ForgeCredentials = nil
+	}
+	if *clearGate {
+		r.Gate = store.Gate{}
 	}
 	if err := st.UpdateRepo(ctx, r); err != nil {
 		return fmt.Errorf("updating repo %s: %w", *slug, err)
