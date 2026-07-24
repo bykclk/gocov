@@ -552,6 +552,74 @@ func TestUploadDiffCoverage(t *testing.T) {
 	}
 }
 
+func TestPRCommentUpdatedInPlace(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+
+	// First upload: no existing comment -> posted.
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "pr_id": "7"}, testProfile)
+	var resp uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.PRComment != "posted" {
+		t.Fatalf("first pr_comment = %q, want posted", resp.PRComment)
+	}
+
+	// Second upload on the same PR: the existing comment is updated.
+	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n"
+	rec = doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "pr_id": "7"}, better)
+	var resp2 uploadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp2); err != nil {
+		t.Fatal(err)
+	}
+	if resp2.PRComment != "updated" {
+		t.Fatalf("second pr_comment = %q, want updated; body = %s", resp2.PRComment, rec.Body)
+	}
+	if len(f.forge.CommentCalls) != 1 {
+		t.Errorf("got %d posted comments, want 1 (no stacking)", len(f.forge.CommentCalls))
+	}
+	if len(f.forge.UpdateCalls) != 1 {
+		t.Fatalf("got %d update calls, want 1", len(f.forge.UpdateCalls))
+	}
+	upd := f.forge.UpdateCalls[0]
+	if upd.PRID != "7" || !strings.Contains(upd.Body, "c2") || !strings.Contains(upd.Body, "100.0%") {
+		t.Errorf("update call = %+v", upd)
+	}
+	if !strings.HasPrefix(upd.Body, prCommentMarker) {
+		t.Errorf("comment body must keep the marker prefix: %q", upd.Body[:40])
+	}
+}
+
+func TestPRCommentUpdateFallsBackToPost(t *testing.T) {
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "pr_id": "7"}, testProfile)
+
+	t.Run("update failure posts a fresh comment", func(t *testing.T) {
+		f.forge.UpdateErr = errFake
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "pr_id": "7"}, testProfile)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.PRComment != "posted" {
+			t.Errorf("pr_comment = %q, want posted fallback", resp.PRComment)
+		}
+		f.forge.UpdateErr = nil
+	})
+
+	t.Run("find failure posts a fresh comment", func(t *testing.T) {
+		f.forge.FindErr = errFake
+		rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "pr_id": "7"}, testProfile)
+		var resp uploadResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.PRComment != "posted" {
+			t.Errorf("pr_comment = %q, want posted fallback", resp.PRComment)
+		}
+	})
+}
+
 func TestUploadDiffCoverageErrorPaths(t *testing.T) {
 	t.Run("no credentials", func(t *testing.T) {
 		f := newFixture(t, nil)

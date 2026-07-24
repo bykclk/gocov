@@ -462,8 +462,14 @@ func (s *Server) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr erro
 	return "posted"
 }
 
-// pushPRComment posts a coverage summary comment on the pull request.
-// Returns "" for non-PR uploads so the field is omitted from the response.
+// prCommentMarker identifies gocov's own comment on a PR; every body
+// built by prCommentBody starts with it, so repeated uploads update the
+// existing comment instead of stacking new ones.
+const prCommentMarker = "**gocov**"
+
+// pushPRComment posts or updates the coverage summary comment on the pull
+// request. Returns "" for non-PR uploads so the field is omitted from the
+// response.
 func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64) string {
 	if u.PRID == "" {
 		return ""
@@ -474,7 +480,23 @@ func (s *Server) pushPRComment(ctx context.Context, fg forge.Forge, fgErr error,
 	if fg == nil {
 		return "skipped"
 	}
-	if err := fg.PostPRComment(ctx, repo.Slug, u.PRID, s.prCommentBody(u, deltaPct)); err != nil {
+	body := s.prCommentBody(u, deltaPct)
+
+	// Best effort update-in-place: any failure falls back to posting a
+	// fresh comment, which is never worse than the old behavior.
+	commentID, err := fg.FindPRComment(ctx, repo.Slug, u.PRID, prCommentMarker)
+	if err != nil && !errors.Is(err, forge.ErrNotImplemented) {
+		s.log.Warn("find PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
+	}
+	if commentID != "" {
+		if err := fg.UpdatePRComment(ctx, repo.Slug, u.PRID, commentID, body); err == nil {
+			return "updated"
+		} else {
+			s.log.Warn("update PR comment", "repo", repo.Slug, "pr", u.PRID, "comment", commentID, "err", err)
+		}
+	}
+
+	if err := fg.PostPRComment(ctx, repo.Slug, u.PRID, body); err != nil {
 		s.log.Error("post PR comment", "repo", repo.Slug, "pr", u.PRID, "err", err)
 		return "error: " + err.Error()
 	}

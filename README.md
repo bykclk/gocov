@@ -22,7 +22,8 @@ format is detected from the uploaded content.
   the repo has an app password configured
 - Diff coverage for pull requests: fetches the PR diff from Bitbucket,
   intersects changed lines with coverage blocks, and posts a PR comment
-  listing uncovered changed lines
+  listing uncovered changed lines — repeated uploads update the same
+  comment instead of stacking new ones
 
 The architecture is deliberately extensible: coverage formats sit behind
 `profile.Parser`, forges behind `forge.Forge`, raw profile storage behind

@@ -85,6 +85,96 @@ func TestPostPRComment(t *testing.T) {
 	}
 }
 
+func TestFindPRComment(t *testing.T) {
+	// Comments are served newest first across two pages. The first match
+	// must be the newest comment that is ours, top-level and not deleted:
+	// bot-authored look-alikes by others, replies, inline and deleted
+	// comments are all skipped.
+	var srvURL string
+	var gotSort string
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			_, _ = w.Write([]byte(`{"account_id": "bot-123", "uuid": "{b-uuid}"}`))
+			return
+		}
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = w.Write([]byte(`{"values": [
+				{"id": 20, "user": {"account_id": "bot-123"}, "content": {"raw": "**gocov** report for old"}}
+			]}`))
+			return
+		}
+		gotSort = r.URL.Query().Get("sort")
+		_, _ = w.Write([]byte(`{"values": [
+			{"id": 55, "user": {"account_id": "intruder"}, "content": {"raw": "**gocov** fake capture"}},
+			{"id": 54, "user": {"account_id": "bot-123"}, "parent": {"id": 40}, "content": {"raw": "**gocov** reply"}},
+			{"id": 53, "user": {"account_id": "bot-123"}, "deleted": true, "content": {"raw": "**gocov** deleted"}},
+			{"id": 52, "user": {"account_id": "bot-123"}, "inline": {"path": "a.go"}, "content": {"raw": "**gocov** inline"}},
+			{"id": 51, "user": {"account_id": "bot-123"}, "content": {"raw": "**gocov** report for new"}}
+		], "next": "` + srvURL + r.URL.Path + `?page=2"}`))
+	}
+	srv := httptest.NewServer(http.HandlerFunc(handler))
+	defer srv.Close()
+	srvURL = srv.URL
+	c := &Client{BaseURL: srv.URL, Username: "u", AppPassword: "p", HTTPClient: srv.Client()}
+
+	id, err := c.FindPRComment(context.Background(), "acme/widgets", "42", "**gocov**")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != "51" {
+		t.Errorf("id = %q, want 51 (newest own top-level match)", id)
+	}
+	if gotSort != "-created_on" {
+		t.Errorf("sort = %q, want -created_on", gotSort)
+	}
+}
+
+func TestFindPRCommentNoMatch(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			_, _ = w.Write([]byte(`{"account_id": "bot-123"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"values": [{"id": 1, "user": {"account_id": "bot-123"}, "content": {"raw": "hi"}}]}`))
+	})
+	id, err := c.FindPRComment(context.Background(), "a/b", "1", "**gocov**")
+	if err != nil || id != "" {
+		t.Errorf("id, err = %q, %v; want empty, nil", id, err)
+	}
+}
+
+func TestFindPRCommentIdentityFailure(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/user" {
+			http.Error(w, "nope", http.StatusUnauthorized)
+			return
+		}
+		t.Error("comments must not be listed when identity is unknown")
+	})
+	if _, err := c.FindPRComment(context.Background(), "a/b", "1", "**gocov**"); err == nil {
+		t.Error("want error when /user fails")
+	}
+}
+
+func TestUpdatePRComment(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+	})
+	if err := c.UpdatePRComment(context.Background(), "acme/widgets", "42", "31", "new body"); err != nil {
+		t.Fatal(err)
+	}
+	if gotMethod != http.MethodPut || gotPath != "/repositories/acme/widgets/pullrequests/42/comments/31" {
+		t.Errorf("%s %s", gotMethod, gotPath)
+	}
+	content, _ := gotBody["content"].(map[string]any)
+	if content["raw"] != "new body" {
+		t.Errorf("body = %v", gotBody)
+	}
+}
+
 func TestGetPRDiff(t *testing.T) {
 	const diff = "--- a/a.go\n+++ b/a.go\n@@ -1 +1,2 @@\n x\n+y\n"
 	var gotPath, gotUser string

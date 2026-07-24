@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/bykclk/gocov/internal/forge"
@@ -63,7 +65,7 @@ func (c *Client) PostBuildStatus(ctx context.Context, repoSlug, commitSHA string
 	}
 	path := fmt.Sprintf("/repositories/%s/commit/%s/statuses/build",
 		repoSlug, url.PathEscape(commitSHA))
-	return c.post(ctx, path, body)
+	return c.send(ctx, http.MethodPost, path, body)
 }
 
 // PostPRComment adds a comment via
@@ -74,7 +76,123 @@ func (c *Client) PostPRComment(ctx context.Context, repoSlug, prID, body string)
 	}
 	path := fmt.Sprintf("/repositories/%s/pullrequests/%s/comments",
 		repoSlug, url.PathEscape(prID))
-	return c.post(ctx, path, payload)
+	return c.send(ctx, http.MethodPost, path, payload)
+}
+
+// maxCommentPages bounds pagination when searching for an earlier comment.
+const maxCommentPages = 10
+
+// bitbucketUser identifies an account; either field may be empty depending
+// on the credential type.
+type bitbucketUser struct {
+	AccountID string `json:"account_id"`
+	UUID      string `json:"uuid"`
+}
+
+func (u bitbucketUser) is(other bitbucketUser) bool {
+	if u.AccountID != "" && u.AccountID == other.AccountID {
+		return true
+	}
+	return u.UUID != "" && u.UUID == other.UUID
+}
+
+// currentUser resolves the authenticated account via GET /user.
+func (c *Client) currentUser(ctx context.Context) (bitbucketUser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/user", nil)
+	if err != nil {
+		return bitbucketUser{}, err
+	}
+	req.SetBasicAuth(c.Username, c.AppPassword)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return bitbucketUser{}, fmt.Errorf("bitbucket: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return bitbucketUser{}, fmt.Errorf("bitbucket: /user returned %d: %s", resp.StatusCode, msg)
+	}
+	var u bitbucketUser
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&u); err != nil {
+		return bitbucketUser{}, fmt.Errorf("bitbucket: decoding /user: %w", err)
+	}
+	if u.AccountID == "" && u.UUID == "" {
+		return bitbucketUser{}, fmt.Errorf("bitbucket: /user returned no account identity")
+	}
+	return u, nil
+}
+
+// FindPRComment returns the id of the newest top-level PR comment that was
+// authored by the credential account and starts with prefix. Comments are
+// requested newest first, so the page cap only bounds how far back the
+// search goes; replies, inline comments and other authors never match —
+// a stranger's "**gocov**" comment must not be able to capture the slot.
+func (c *Client) FindPRComment(ctx context.Context, repoSlug, prID, prefix string) (string, error) {
+	self, err := c.currentUser(ctx)
+	if err != nil {
+		return "", err
+	}
+	next := fmt.Sprintf("%s/repositories/%s/pullrequests/%s/comments?pagelen=100&sort=-created_on",
+		c.BaseURL, repoSlug, url.PathEscape(prID))
+	for page := 0; next != "" && page < maxCommentPages; page++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
+		if err != nil {
+			return "", err
+		}
+		req.SetBasicAuth(c.Username, c.AppPassword)
+		resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return "", fmt.Errorf("bitbucket: %w", err)
+		}
+		var body struct {
+			Values []struct {
+				ID      int64 `json:"id"`
+				Deleted bool  `json:"deleted"`
+				Inline  *struct {
+					Path string `json:"path"`
+				} `json:"inline"`
+				Parent *struct {
+					ID int64 `json:"id"`
+				} `json:"parent"`
+				User    bitbucketUser `json:"user"`
+				Content struct {
+					Raw string `json:"raw"`
+				} `json:"content"`
+			} `json:"values"`
+			Next string `json:"next"`
+		}
+		if resp.StatusCode >= 300 {
+			msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+			return "", fmt.Errorf("bitbucket: listing PR comments returned %d: %s", resp.StatusCode, msg)
+		}
+		err = json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&body)
+		resp.Body.Close()
+		if err != nil {
+			return "", fmt.Errorf("bitbucket: decoding PR comments: %w", err)
+		}
+		for _, v := range body.Values {
+			if v.Deleted || v.Inline != nil || v.Parent != nil || !self.is(v.User) {
+				continue
+			}
+			if strings.HasPrefix(v.Content.Raw, prefix) {
+				return strconv.FormatInt(v.ID, 10), nil
+			}
+		}
+		next = body.Next
+	}
+	return "", nil
+}
+
+// UpdatePRComment replaces a comment's body via
+// PUT /repositories/{slug}/pullrequests/{id}/comments/{comment_id}.
+func (c *Client) UpdatePRComment(ctx context.Context, repoSlug, prID, commentID, body string) error {
+	payload := map[string]any{
+		"content": map[string]string{"raw": body},
+	}
+	path := fmt.Sprintf("/repositories/%s/pullrequests/%s/comments/%s",
+		repoSlug, url.PathEscape(prID), url.PathEscape(commentID))
+	return c.send(ctx, http.MethodPut, path, payload)
 }
 
 // GetPRDiff fetches the unified diff of a pull request via
@@ -146,12 +264,12 @@ func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string,
 	return body.MainBranch.Name, nil
 }
 
-func (c *Client) post(ctx context.Context, path string, payload any) error {
+func (c *Client) send(ctx context.Context, method, path string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}

@@ -38,6 +38,14 @@ type Forge interface {
 	PostBuildStatus(ctx context.Context, repoSlug, commitSHA string, status BuildStatus) error
 	// PostPRComment adds a comment to a pull request.
 	PostPRComment(ctx context.Context, repoSlug, prID, body string) error
+	// FindPRComment returns the id of the newest non-deleted top-level
+	// PR comment that was authored by the credential account and whose
+	// raw content starts with prefix, or "" when there is none. Used to
+	// update a previously posted comment in place; other authors must
+	// never match, so a look-alike comment cannot capture the slot.
+	FindPRComment(ctx context.Context, repoSlug, prID, prefix string) (string, error)
+	// UpdatePRComment replaces the body of an existing PR comment.
+	UpdatePRComment(ctx context.Context, repoSlug, prID, commentID, body string) error
 	// GetPRDiff returns the unified diff of a pull request.
 	GetPRDiff(ctx context.Context, repoSlug, prID string) (string, error)
 	// GetDefaultBranch returns the repository's main branch name, used

@@ -3,6 +3,9 @@ package fake
 
 import (
 	"context"
+	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/bykclk/gocov/internal/forge"
@@ -22,12 +25,22 @@ type CommentCall struct {
 	Body     string
 }
 
+// UpdateCall records one UpdatePRComment invocation.
+type UpdateCall struct {
+	RepoSlug  string
+	PRID      string
+	CommentID string
+	Body      string
+}
+
 // Forge records calls and returns configurable errors.
 type Forge struct {
 	mu sync.Mutex
 
 	StatusErr  error  // returned by PostBuildStatus
 	CommentErr error  // returned by PostPRComment
+	FindErr    error  // returned by FindPRComment
+	UpdateErr  error  // returned by UpdatePRComment
 	DiffText   string // returned by GetPRDiff; empty means ErrNotImplemented
 	DiffErr    error  // returned by GetPRDiff when set
 	// DefaultBranch is returned by GetDefaultBranch; empty means
@@ -37,8 +50,15 @@ type Forge struct {
 
 	StatusCalls        []StatusCall
 	CommentCalls       []CommentCall
+	UpdateCalls        []UpdateCall
+	FindCalls          []string // prefixes
 	DiffCalls          []DiffCall
 	DefaultBranchCalls []string // repo slugs
+
+	// comments simulates the PR comment store: posted and updated bodies
+	// keyed by a fake incremental id, so FindPRComment behaves like the
+	// real forge across multiple uploads.
+	comments []string
 }
 
 // DiffCall records one GetPRDiff invocation.
@@ -75,6 +95,37 @@ func (f *Forge) PostPRComment(_ context.Context, repoSlug, prID, body string) er
 		return f.CommentErr
 	}
 	f.CommentCalls = append(f.CommentCalls, CommentCall{repoSlug, prID, body})
+	f.comments = append(f.comments, body)
+	return nil
+}
+
+func (f *Forge) FindPRComment(_ context.Context, repoSlug, prID, prefix string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.FindCalls = append(f.FindCalls, prefix)
+	if f.FindErr != nil {
+		return "", f.FindErr
+	}
+	for i := len(f.comments) - 1; i >= 0; i-- {
+		if strings.HasPrefix(f.comments[i], prefix) {
+			return strconv.Itoa(i), nil
+		}
+	}
+	return "", nil
+}
+
+func (f *Forge) UpdatePRComment(_ context.Context, repoSlug, prID, commentID, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.UpdateErr != nil {
+		return f.UpdateErr
+	}
+	i, err := strconv.Atoi(commentID)
+	if err != nil || i < 0 || i >= len(f.comments) {
+		return fmt.Errorf("fake: unknown comment id %q", commentID)
+	}
+	f.comments[i] = body
+	f.UpdateCalls = append(f.UpdateCalls, UpdateCall{repoSlug, prID, commentID, body})
 	return nil
 }
 
