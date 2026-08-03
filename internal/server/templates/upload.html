@@ -1,55 +1,61 @@
-{{define "upload.html"}}<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>gocov — {{.Repo.Slug}} @ {{short .Upload.CommitSHA}}</title>
-{{template "style"}}
-</head>
-<body>
-<header><a href="/">gocov</a> / <a href="/repos/{{.Repo.Slug}}">{{.Repo.Slug}}</a> / <code>{{short .Upload.CommitSHA}}</code></header>
-<main>
-<h1>{{pct .Upload.TotalPct}} <small>({{.Upload.CoveredStmts}}/{{.Upload.TotalStmts}} statements)</small></h1>
-<p>
-Branch <strong>{{.Upload.Branch}}</strong>{{if .Upload.PRID}}, PR #{{.Upload.PRID}}{{end}},
-uploaded {{.Upload.CreatedAt.Format "2006-01-02 15:04 MST"}}
-</p>
+{{define "title"}}gocov — {{.Repo.Slug}} @ {{short .Upload.CommitSHA}}{{end}}
+{{define "content"}}
+<div class="crumbs"><a href="/">Repos</a> / <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / <code>{{short .Upload.CommitSHA}}</code></div>
+<h1>{{pct .Upload.TotalPct}} <small>&middot; {{.Upload.CoveredStmts}}/{{.Upload.TotalStmts}} statements &middot; {{.Upload.Format}} profile</small></h1>
+
+<div class="stats">
+  <div class="stat"><div class="k">Total</div>
+    <div class="v"><span class="pct {{covclass .Upload.TotalPct}}">{{pct .Upload.TotalPct}}</span></div></div>
+  <div class="stat"><div class="k">Diff coverage</div>
+    <div class="v">{{with .Upload.DiffCoverage}}{{if .TotalLines}}{{pct .Percent}} <small>{{.CoveredLines}}/{{.TotalLines}} lines</small>{{else}}<span class="muted small">no executable changes</span>{{end}}{{else}}<span class="muted">&mdash;</span>{{end}}</div></div>
+  <div class="stat"><div class="k">Gate</div>
+    <div class="v chips">{{if .GateConfigured}}{{if .Upload.GateFailed}}<span class="chip fail">&#10007; failed</span>{{else}}<span class="chip pass">&#10003; passed</span>{{end}}{{else}}<span class="muted small">not configured</span>{{end}}</div></div>
+  <div class="stat"><div class="k">Branch</div>
+    <div class="v mono chips">{{.Upload.Branch}} {{if .Upload.PRID}}<span class="chip info">PR #{{.Upload.PRID}}</span>{{end}}</div></div>
+</div>
+
 {{with .Upload.DiffCoverage}}
-<h2>Diff coverage: {{if .TotalLines}}{{pct .Percent}} <small>({{.CoveredLines}}/{{.TotalLines}} changed lines)</small>{{else}}no executable lines changed{{end}}</h2>
 {{if .Files}}
+<h2>Diff coverage: {{if .TotalLines}}{{pct .Percent}} <small>({{.CoveredLines}}/{{.TotalLines}} changed lines)</small>{{else}}no executable lines changed{{end}}</h2>
+<div class="card">
 <table>
-<thead><tr><th>Changed file</th><th class="num">Coverage</th><th>Uncovered lines</th></tr></thead>
+<thead><tr><th>Changed file</th><th class="num">Covered</th><th>Uncovered lines</th></tr></thead>
 <tbody>
 {{range .Files}}
 <tr>
 <td><code>{{.Path}}</code></td>
-<td class="num">{{.CoveredLines}}/{{.TotalLines}}</td>
-<td>{{ranges .UncoveredLines}}</td>
+<td class="num muted small">{{.CoveredLines}}/{{.TotalLines}}</td>
+<td>{{with .UncoveredLines}}<span class="uncov">{{ranges .}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
 </tr>
 {{end}}
 </tbody>
 </table>
+</div>
 {{end}}
 {{if .UnmatchedFiles}}
-<p class="empty">Changed files without coverage data:
+<p class="sub small">Changed files without coverage data:
 {{range $i, $p := .UnmatchedFiles}}{{if $i}}, {{end}}<code>{{$p}}</code>{{end}}</p>
 {{end}}
 {{end}}
+
+<h2>Files</h2>
+<div class="card">
 {{if .Files}}
 <table>
-<thead><tr><th>File</th><th class="num">Coverage</th><th class="num">Statements</th></tr></thead>
+<thead><tr><th>File</th><th>Coverage</th><th class="num">Statements</th><th>Uncovered lines</th></tr></thead>
 <tbody>
 {{range .Files}}
 <tr>
 <td><code>{{.Path}}</code></td>
-<td class="num">{{pct .Pct}}</td>
-<td class="num">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td>{{template "covbar" .Pct}}</td>
+<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td>{{with .Uncovered}}<span class="uncov">{{.}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
 </tr>
 {{end}}
 </tbody>
 </table>
 {{else}}
-<p class="empty">No per-file data.</p>
+<div class="empty">No per-file data.</div>
 {{end}}
-</main>
-</body>
-</html>{{end}}
+</div>
+{{end}}

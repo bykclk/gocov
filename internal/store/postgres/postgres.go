@@ -354,6 +354,30 @@ func (s *Store) ListUploads(ctx context.Context, repoID int64, limit int) ([]*st
 	return out, rows.Err()
 }
 
+func (s *Store) ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
+	var lim any
+	if limit > 0 {
+		lim = limit
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+uploadCols+` FROM uploads
+		 WHERE repo_id = $1 AND branch = $2 ORDER BY id DESC LIMIT $3`,
+		repoID, branch, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.Upload
+	for rows.Next() {
+		u, err := s.scanUpload(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) LatestUpload(ctx context.Context, repoID int64, branch string) (*store.Upload, error) {
 	return s.scanUpload(s.pool.QueryRow(ctx,
 		`SELECT `+uploadCols+` FROM uploads

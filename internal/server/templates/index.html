@@ -1,30 +1,30 @@
-{{define "index.html"}}<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>gocov — repositories</title>
-{{template "style"}}
-</head>
-<body>
-<header><a href="/">gocov</a></header>
-<main>
+{{define "title"}}gocov — repositories{{end}}
+{{define "content"}}
 <h1>Repositories</h1>
-{{if .Repos}}
+<p class="sub">{{len .Rows}} {{if eq (len .Rows) 1}}repo{{else}}repos{{end}}{{with .Query}} matching &ldquo;{{.}}&rdquo;{{end}}</p>
+<div class="toolbar">
+  <input class="input" type="search" name="q" value="{{.Query}}" placeholder="Search repos&hellip;"
+         hx-get="/" hx-trigger="input changed delay:300ms, search" hx-target="#repo-list"
+         hx-select="#repo-list" hx-swap="outerHTML" hx-push-url="true">
+</div>
+<div class="card" id="repo-list">
+{{if .Rows}}
 <table>
-<thead><tr><th>Repository</th><th>Default branch</th><th class="num">Coverage</th></tr></thead>
+<thead><tr><th>Repository</th><th>Coverage</th><th class="num">&Delta;</th><th>Gate</th><th>Last upload</th></tr></thead>
 <tbody>
-{{range .Repos}}
+{{range .Rows}}
 <tr>
-<td><a href="/repos/{{.Repo.Slug}}">{{.Repo.Slug}}</a></td>
-<td>{{.Repo.DefaultBranch}}</td>
-<td class="num">{{if .Latest}}{{pct .Latest.TotalPct}}{{else}}—{{end}}</td>
+<td><a class="mono" href="/repos/{{.Repo.Slug}}">{{.Repo.Slug}}</a></td>
+<td>{{if .Latest}}{{template "covbar" .Latest.TotalPct}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
+<td class="num">{{template "delta" .Delta}}</td>
+<td>{{template "gatechip" .Gate}}</td>
+<td class="muted small">{{if .Latest}}{{timeago .Latest.CreatedAt}}{{else}}never{{end}}</td>
 </tr>
 {{end}}
 </tbody>
 </table>
 {{else}}
-<p class="empty">No repositories yet. Add one with <code>gocov-server repo add -slug workspace/repo</code>.</p>
+<div class="empty">No repositories yet. Add one with <code>gocov-server repo add</code> or upload through a workspace token.</div>
 {{end}}
-</main>
-</body>
-</html>{{end}}
+</div>
+{{end}}

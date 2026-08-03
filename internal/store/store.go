@@ -125,6 +125,8 @@ type Store interface {
 	Upload(ctx context.Context, id int64) (*Upload, error)
 	// ListUploads returns uploads newest first; limit <= 0 means all.
 	ListUploads(ctx context.Context, repoID int64, limit int) ([]*Upload, error)
+	// ListBranchUploads is ListUploads restricted to one branch.
+	ListBranchUploads(ctx context.Context, repoID int64, branch string, limit int) ([]*Upload, error)
 	UploadFiles(ctx context.Context, uploadID int64) ([]*UploadFile, error)
 	// LatestUpload returns the most recent upload for a branch.
 	LatestUpload(ctx context.Context, repoID int64, branch string) (*Upload, error)

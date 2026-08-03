@@ -280,6 +280,22 @@ func (s *Store) UploadFiles(_ context.Context, uploadID int64) ([]*store.UploadF
 	return out, nil
 }
 
+func (s *Store) ListBranchUploads(_ context.Context, repoID int64, branch string, limit int) ([]*store.Upload, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []*store.Upload
+	for _, u := range s.uploads {
+		if u.RepoID == repoID && u.Branch == branch {
+			out = append(out, copyUpload(u))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID > out[j].ID })
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (s *Store) LatestUpload(_ context.Context, repoID int64, branch string) (*store.Upload, error) {
 	return s.latestUpload(repoID, branch, false)
 }

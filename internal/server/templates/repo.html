@@ -1,34 +1,67 @@
-{{define "repo.html"}}<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>gocov — {{.Repo.Slug}}</title>
-{{template "style"}}
-</head>
-<body>
-<header><a href="/">gocov</a> / {{.Repo.Slug}}</header>
-<main>
-<h1>{{.Repo.Slug}}</h1>
-<p><img src="/badge/{{.Repo.Slug}}.svg" alt="coverage badge"></p>
+{{define "title"}}gocov — {{.Repo.Slug}}{{end}}
+{{define "content"}}
+<div class="crumbs"><a href="/">Repos</a> / <code>{{.Repo.Slug}}</code></div>
+<h1>{{.Repo.Slug}} <small>&middot; default branch <code class="mono">{{.Repo.DefaultBranch}}</code></small></h1>
+
+<div class="stats">
+  <div class="stat"><div class="k">Coverage</div>
+    <div class="v">{{if .Latest}}<span class="pct {{covclass .Latest.TotalPct}}">{{pct .Latest.TotalPct}}</span>{{else}}<span class="muted">&mdash;</span>{{end}}</div></div>
+  <div class="stat"><div class="k">Delta</div>
+    <div class="v">{{if .Delta}}{{template "delta" .Delta}}{{else}}<span class="muted">&mdash;</span>{{end}} <small>vs previous</small></div></div>
+  <div class="stat"><div class="k">Gate</div>
+    <div class="v chips">{{if .GateSummary}}<span class="chip {{if eq .Gate "fail"}}fail{{else}}pass{{end}}">{{.GateSummary}}</span>{{else}}<span class="muted small">not configured</span>{{end}}</div></div>
+  <div class="stat"><div class="k">Last upload</div>
+    <div class="v" style="font-size: 15px; padding-top: 8px">{{if .Latest}}{{timeago .Latest.CreatedAt}}{{else}}<span class="muted">never</span>{{end}}</div></div>
+</div>
+
+<div class="badgebox">
+  <img alt="coverage badge" src="/badge/{{.Repo.Slug}}.svg">
+  <input id="badge-md" class="input mono" readonly onfocus="this.select()"
+         style="flex: 1; min-width: 0; font-size: 12px"
+         value="![coverage]({{.BaseURL}}/badge/{{.Repo.Slug}}.svg)">
+  <button class="btn" data-copy="#badge-md">Copy</button>
+</div>
+
+<div class="toolbar">
+  <select class="input" name="branch"
+          hx-get="/repos/{{.Repo.Slug}}" hx-target="#uploads" hx-select="#uploads"
+          hx-swap="outerHTML" hx-push-url="true">
+    <option value="">All branches</option>
+    {{$sel := .Branch}}
+    {{range .Branches}}<option value="{{.}}"{{if eq . $sel}} selected{{end}}>{{.}}</option>{{end}}
+  </select>
+</div>
+
+<div id="uploads">
+<div class="card">
 {{if .Uploads}}
 <table>
-<thead><tr><th>Commit</th><th>Branch</th><th>PR</th><th class="num">Coverage</th><th class="num">Statements</th><th>Uploaded</th></tr></thead>
+<thead><tr><th>Commit</th><th>Branch</th><th>PR</th><th>Gate</th><th>Coverage</th><th class="num">Statements</th><th>Uploaded</th></tr></thead>
 <tbody>
 {{range .Uploads}}
 <tr>
 <td><a href="/uploads/{{.ID}}"><code>{{short .CommitSHA}}</code></a></td>
-<td>{{.Branch}}</td>
-<td>{{if .PRID}}#{{.PRID}}{{end}}</td>
-<td class="num">{{pct .TotalPct}}</td>
-<td class="num">{{.CoveredStmts}}/{{.TotalStmts}}</td>
-<td>{{.CreatedAt.Format "2006-01-02 15:04 MST"}}</td>
+<td class="mono small">{{.Branch}}</td>
+<td>{{if .PRID}}<span class="chip info">PR #{{.PRID}}</span>{{end}}</td>
+<td>{{if .GateFailed}}<span class="chip fail">&#10007;</span>{{end}}</td>
+<td>{{template "covbar" .TotalPct}}</td>
+<td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
+<td class="muted small">{{timeago .CreatedAt}}</td>
 </tr>
 {{end}}
 </tbody>
 </table>
 {{else}}
-<p class="empty">No uploads yet.</p>
+<div class="empty">No uploads{{with .Branch}} on <code>{{.}}</code>{{end}} yet.</div>
 {{end}}
-</main>
-</body>
-</html>{{end}}
+</div>
+<div class="pagination">
+  {{if gt .Page 0}}<a class="btn" href="?branch={{.Branch}}&page={{.PrevPage}}"
+     hx-get="/repos/{{.Repo.Slug}}?branch={{.Branch}}&page={{.PrevPage}}" hx-target="#uploads"
+     hx-select="#uploads" hx-swap="outerHTML" hx-push-url="true">&larr; Newer</a>{{end}}
+  {{if .HasOlder}}<a class="btn" href="?branch={{.Branch}}&page={{.NextPage}}"
+     hx-get="/repos/{{.Repo.Slug}}?branch={{.Branch}}&page={{.NextPage}}" hx-target="#uploads"
+     hx-select="#uploads" hx-swap="outerHTML" hx-push-url="true">Older &rarr;</a>{{end}}
+</div>
+</div>
+{{end}}

@@ -5,7 +5,9 @@ import (
 	"context"
 	"embed"
 	"fmt"
+	"hash/fnv"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"time"
@@ -19,6 +21,9 @@ import (
 
 //go:embed templates/*.html
 var templatesFS embed.FS
+
+//go:embed static
+var staticFS embed.FS
 
 // Config wires the server's dependencies. All fields are required except
 // Logger, BaseURL and Health.
@@ -46,7 +51,7 @@ type Server struct {
 	forges       map[string]forge.Factory
 	baseURL      string
 	log          *slog.Logger
-	tmpl         *template.Template
+	pages        map[string]*template.Template
 	mux          *http.ServeMux
 	health       func(ctx context.Context) error
 	defaultCreds map[string]map[string]string
@@ -58,6 +63,7 @@ func New(cfg Config) *Server {
 	if log == nil {
 		log = slog.Default()
 	}
+	assetVer := staticVersion()
 	funcs := template.FuncMap{
 		"pct": func(v float64) string { return fmt.Sprintf("%.1f%%", v) },
 		"short": func(sha string) string {
@@ -66,9 +72,20 @@ func New(cfg Config) *Server {
 			}
 			return sha
 		},
-		"ranges": diffcov.Ranges,
+		"ranges":   diffcov.Ranges,
+		"covclass": covClass,
+		"timeago":  timeAgo,
+		// asset appends a content-derived version so browsers refetch
+		// embedded assets after a server upgrade despite long cache TTLs.
+		"asset": func(path string) string { return path + "?v=" + assetVer },
 	}
-	tmpl := template.Must(template.New("").Funcs(funcs).ParseFS(templatesFS, "templates/*.html"))
+	// Every page is its own template set sharing the layout and partials,
+	// so pages can define "content" without colliding.
+	pages := map[string]*template.Template{}
+	for _, name := range []string{"index.html", "repo.html", "upload.html"} {
+		pages[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templatesFS,
+			"templates/layout.html", "templates/partials.html", "templates/"+name))
+	}
 
 	s := &Server{
 		store:        cfg.Store,
@@ -77,7 +94,7 @@ func New(cfg Config) *Server {
 		forges:       cfg.Forges,
 		baseURL:      cfg.BaseURL,
 		log:          log,
-		tmpl:         tmpl,
+		pages:        pages,
 		mux:          http.NewServeMux(),
 		health:       cfg.Health,
 		defaultCreds: cfg.DefaultForgeCredentials,
@@ -90,9 +107,38 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.handleUpload)
 	s.mux.HandleFunc("GET /badge/{slug...}", s.handleBadge)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.Handle("GET /static/", cacheStatic(http.FileServerFS(staticFS)))
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
+}
+
+// cacheStatic adds cache headers for the embedded assets. URLs carry a
+// content-derived ?v=, so long-lived caching is safe across upgrades.
+func cacheStatic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		next.ServeHTTP(w, r)
+	})
+}
+
+// staticVersion hashes the embedded static files, changing whenever their
+// content changes.
+func staticVersion() string {
+	h := fnv.New64a()
+	_ = fs.WalkDir(staticFS, "static", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		data, err := staticFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		_, _ = h.Write([]byte(path))
+		_, _ = h.Write(data)
+		return nil
+	})
+	return fmt.Sprintf("%x", h.Sum64())
 }
 
 // handleHealthz reports readiness: 200 when the health probe (typically a
@@ -116,8 +162,51 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
+	t, ok := s.pages[name]
+	if !ok {
+		s.log.Error("unknown page template", "template", name)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
+	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
 		s.log.Error("render template", "template", name, "err", err)
+	}
+}
+
+// covClass maps a percentage to the badge threshold classes.
+func covClass(p float64) string {
+	switch {
+	case p < 50:
+		return "bad"
+	case p <= 75:
+		return "warn"
+	default:
+		return "good"
+	}
+}
+
+// timeAgo renders a compact relative timestamp for tables.
+func timeAgo(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%d min ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		h := int(d.Hours())
+		if h == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", h)
+	case d < 14*24*time.Hour:
+		days := int(d.Hours() / 24)
+		if days == 1 {
+			return "yesterday"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	default:
+		return t.Format("2006-01-02")
 	}
 }

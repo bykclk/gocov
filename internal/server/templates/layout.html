@@ -1,0 +1,22 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{block "title" .}}gocov{{end}}</title>
+<link rel="icon" href="{{asset "/static/favicon.svg"}}" type="image/svg+xml">
+<link rel="stylesheet" href="{{asset "/static/style.css"}}">
+<script src="{{asset "/static/htmx.min.js"}}" defer></script>
+<script src="{{asset "/static/app.js"}}" defer></script>
+</head>
+<body>
+<div class="nav">
+  <a class="logo" href="/"><span class="mark">g</span> gocov</a>
+  <a class="item" href="/">Repos</a>
+  <span class="spacer"></span>
+</div>
+<div class="wrap">
+{{block "content" .}}{{end}}
+</div>
+</body>
+</html>{{end}}

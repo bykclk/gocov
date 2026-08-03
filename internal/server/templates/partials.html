@@ -1,0 +1,5 @@
+{{define "covbar"}}<span class="cov"><span class="track"><span class="fill {{covclass .}}" style="width: {{printf "%.1f" .}}%"></span></span><span class="pct {{covclass .}}">{{pct .}}</span></span>{{end}}
+
+{{define "delta"}}{{if .}}<span class="delta {{.Class}}">{{.Arrow}} {{.Text}}</span>{{end}}{{end}}
+
+{{define "gatechip"}}{{if eq . "pass"}}<span class="chip pass">&#10003; gate</span>{{else if eq . "fail"}}<span class="chip fail">&#10007; gate</span>{{end}}{{end}}
