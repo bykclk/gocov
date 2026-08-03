@@ -47,6 +47,10 @@ type Forge struct {
 	// ErrNotImplemented. DefaultBranchErr wins when set.
 	DefaultBranch    string
 	DefaultBranchErr error
+	// Files maps paths to contents for GetFileContent; missing paths
+	// yield ErrRepoNotFound. FileErr wins when set.
+	Files   map[string]string
+	FileErr error
 
 	StatusCalls        []StatusCall
 	CommentCalls       []CommentCall
@@ -54,6 +58,7 @@ type Forge struct {
 	FindCalls          []string // prefixes
 	DiffCalls          []DiffCall
 	DefaultBranchCalls []string // repo slugs
+	FileCalls          []string // paths
 
 	// comments simulates the PR comment store: posted and updated bodies
 	// keyed by a fake incremental id, so FindPRComment behaves like the
@@ -140,6 +145,20 @@ func (f *Forge) GetDefaultBranch(_ context.Context, repoSlug string) (string, er
 		return "", forge.ErrNotImplemented
 	}
 	return f.DefaultBranch, nil
+}
+
+func (f *Forge) GetFileContent(_ context.Context, repoSlug, commitSHA, path string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.FileCalls = append(f.FileCalls, path)
+	if f.FileErr != nil {
+		return nil, f.FileErr
+	}
+	content, ok := f.Files[path]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
+	}
+	return []byte(content), nil
 }
 
 func (f *Forge) GetPRDiff(_ context.Context, repoSlug, prID string) (string, error) {

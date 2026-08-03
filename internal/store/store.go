@@ -82,6 +82,9 @@ type Upload struct {
 	// GateFailed marks uploads that violated the coverage gate; they are
 	// excluded from comparison baselines.
 	GateFailed bool
+	// PathPrefix maps profile paths to repo-relative paths (e.g. the Go
+	// module path), as sent with the upload.
+	PathPrefix string
 	CreatedAt  time.Time
 }
 

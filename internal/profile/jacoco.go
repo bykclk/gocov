@@ -70,7 +70,7 @@ func (JaCoCoParser) Parse(r io.Reader) (*Profile, error) {
 					files[path] = lines
 				}
 				for _, l := range sf.Lines {
-					if l.Nr <= 0 {
+					if l.Nr <= 0 || l.Nr > maxLineNumber {
 						return fmt.Errorf("jacoco: malformed line number %d in %s", l.Nr, path)
 					}
 					if l.MI == 0 && l.CI == 0 {

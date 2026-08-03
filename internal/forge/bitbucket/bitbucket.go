@@ -264,6 +264,46 @@ func (c *Client) GetDefaultBranch(ctx context.Context, repoSlug string) (string,
 	return body.MainBranch.Name, nil
 }
 
+// maxFileBytes bounds source files fetched for the source view.
+const maxFileBytes = 2 << 20
+
+// GetFileContent reads a file at a commit via
+// GET /repositories/{slug}/src/{commit}/{path}.
+func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path string) ([]byte, error) {
+	segments := strings.Split(path, "/")
+	for i, s := range segments {
+		segments[i] = url.PathEscape(s)
+	}
+	reqURL := fmt.Sprintf("%s/repositories/%s/src/%s/%s",
+		c.BaseURL, repoSlug, url.PathEscape(commitSHA), strings.Join(segments, "/"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(c.Username, c.AppPassword)
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("bitbucket: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("%w: %s at %s", forge.ErrRepoNotFound, path, commitSHA)
+	}
+	if resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("bitbucket: reading %s returned %d: %s", path, resp.StatusCode, msg)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("bitbucket: reading %s: %w", path, err)
+	}
+	if len(data) > maxFileBytes {
+		return nil, fmt.Errorf("bitbucket: %s is larger than %d MiB", path, maxFileBytes>>20)
+	}
+	return data, nil
+}
+
 func (c *Client) send(ctx context.Context, method, path string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {

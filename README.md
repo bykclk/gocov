@@ -23,6 +23,11 @@ format is detected from the uploaded content.
 - Coverage gate: per-repo minimums for total and diff coverage plus a
   drop tolerance; violations push a FAILED build status, so a Bitbucket
   merge check can block the PR
+- Source view: any file in an upload renders line by line with coverage
+  overlay and hit counts, fetched from the forge at the exact commit and
+  cached immutably; without forge credentials the page falls back to an
+  uncovered-line summary. Note: the web UI has no authentication yet —
+  deploy on a trusted network (login is on the roadmap)
 - Diff coverage for pull requests: fetches the PR diff from Bitbucket,
   intersects changed lines with coverage blocks, and posts a PR comment
   listing uncovered changed lines — repeated uploads update the same

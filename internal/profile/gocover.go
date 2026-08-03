@@ -117,8 +117,17 @@ func parseGoLine(line string) (string, Block, error) {
 	if b.NumStmts < 0 || b.Count < 0 {
 		return "", Block{}, fmt.Errorf("negative value in line %q", line)
 	}
+	// Bogus line ranges would make every later block iteration (diff
+	// coverage, source rendering) spin over billions of lines.
+	if b.StartLine < 1 || b.EndLine < b.StartLine || b.EndLine > maxLineNumber {
+		return "", Block{}, fmt.Errorf("implausible line range in %q", line)
+	}
 	return path, b, nil
 }
+
+// maxLineNumber bounds line numbers accepted from coverage input; no real
+// source file comes close.
+const maxLineNumber = 5_000_000
 
 func parsePos(s string) (line, col int, err error) {
 	l, c, ok := strings.Cut(s, ".")

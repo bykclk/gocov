@@ -57,7 +57,7 @@ func (CoberturaParser) Parse(r io.Reader) (*Profile, error) {
 				files[path] = lines
 			}
 			for _, l := range cls.Lines {
-				if l.Number <= 0 {
+				if l.Number <= 0 || l.Number > maxLineNumber {
 					return nil, fmt.Errorf("cobertura: malformed line number %d in %s", l.Number, path)
 				}
 				if l.Hits < 0 {

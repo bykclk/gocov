@@ -1,0 +1,22 @@
+{{define "title"}}gocov — {{.File.Path}}{{end}}
+{{define "content"}}
+<div class="crumbs"><a href="/">Repos</a> / <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / <a href="/uploads/{{.Upload.ID}}"><code>{{short .Upload.CommitSHA}}</code></a> / <code>{{.File.Path}}</code></div>
+<h1>{{pct .File.Pct}} <small>&middot; {{.File.CoveredStmts}}/{{.File.TotalStmts}} statements &middot; commit <code class="mono">{{short .Upload.CommitSHA}}</code></small></h1>
+
+{{if .Unavailable}}
+<div class="card"><div class="pad" style="padding: 16px 18px">
+  <p style="margin: 0 0 8px"><strong>Source is unavailable:</strong> <span class="muted">{{.Unavailable}}</span></p>
+  {{with .Uncovered}}
+  <p style="margin: 0">Uncovered lines: <span class="uncov">{{.}}</span></p>
+  {{else}}
+  <p class="muted small" style="margin: 0">Every statement in this file is covered.</p>
+  {{end}}
+</div></div>
+{{else}}
+<p class="sub">Lines marked <span class="chip fail" style="padding: 1px 8px">&#10007;</span> were never executed</p>
+<div class="card"><div class="code" style="padding: 10px 0">
+{{range .Lines}}<div class="codeline{{with .Class}} {{.}}{{end}}"><span class="ln">{{.No}}</span><span class="hits">{{.Hits}}</span><pre>{{.Text}}</pre></div>
+{{end}}
+</div></div>
+{{end}}
+{{end}}

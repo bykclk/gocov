@@ -44,9 +44,10 @@
 <table>
 <thead><tr><th>File</th><th>Coverage</th><th class="num">Statements</th><th>Uncovered lines</th></tr></thead>
 <tbody>
+{{$upload := .Upload}}
 {{range .Files}}
 <tr>
-<td><code>{{.Path}}</code></td>
+<td><a class="mono" href="/uploads/{{$upload.ID}}/files/{{.Path}}">{{.Path}}</a></td>
 <td>{{template "covbar" .Pct}}</td>
 <td class="num muted small">{{.CoveredStmts}}/{{.TotalStmts}}</td>
 <td>{{with .Uncovered}}<span class="uncov">{{.}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>

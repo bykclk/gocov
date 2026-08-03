@@ -50,7 +50,7 @@ func (LCOVParser) Parse(r io.Reader) (*Profile, error) {
 				return nil, fmt.Errorf("line %d: malformed DA record %q", lineNo, l)
 			}
 			ln, err := strconv.Atoi(strings.TrimSpace(fields[0]))
-			if err != nil || ln <= 0 {
+			if err != nil || ln <= 0 || ln > maxLineNumber {
 				return nil, fmt.Errorf("line %d: malformed DA line number %q", lineNo, fields[0])
 			}
 			count, err := strconv.Atoi(strings.TrimSpace(fields[1]))

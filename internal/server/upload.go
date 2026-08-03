@@ -123,6 +123,10 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, "missing field: commit")
 		return
 	}
+	if !commitRe.MatchString(commit) {
+		httpError(w, http.StatusBadRequest, "invalid commit %q: want up to 64 alphanumeric, dot, dash or underscore characters", commit)
+		return
+	}
 	branch := r.FormValue("branch")
 	if branch == "" {
 		branch = repo.DefaultBranch
@@ -208,10 +212,11 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// the repo has no credentials configured.
 	fg, fgErr := s.forgeFor(repo)
 
+	pathPrefix := strings.TrimSuffix(r.FormValue("path_prefix"), "/")
 	var diffResult *diffcov.Result
 	var diffStatus string
 	if prID != "" {
-		diffResult, diffStatus = s.computeDiffCoverage(r.Context(), fg, fgErr, repo, prID, prof, format, r.FormValue("path_prefix"))
+		diffResult, diffStatus = s.computeDiffCoverage(r.Context(), fg, fgErr, repo, prID, prof, format, pathPrefix)
 	}
 
 	gate := evaluateGate(repo.Gate, totalPct, dropDelta, diffResult)
@@ -228,6 +233,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		RawBlobKey:   blobKey,
 		DiffCoverage: diffResult,
 		GateFailed:   gate.failed(),
+		PathPrefix:   pathPrefix,
 	}
 	files := make([]*store.UploadFile, 0, len(prof.Files))
 	for i := range prof.Files {
@@ -383,6 +389,10 @@ func (s *Server) lookupUploadToken(w http.ResponseWriter, r *http.Request, token
 // repoNameRe bounds the repo part of auto-registered slugs: one path
 // segment, conservative charset, sane length.
 var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,100}$`)
+
+// commitRe bounds commit identifiers: they appear in forge API paths and
+// in blobstore cache keys, so separators are not welcome.
+var commitRe = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // resolveUploadRepo maps the authenticated token to the target repo,
 // writing the error response itself on failure. Workspace tokens require

@@ -85,6 +85,10 @@ C:/work/a.go:1.1,2.2 1 1
 		{name: "non-numeric count", input: "mode: set\na.go:1.1,2.2 1 x\n", wantErr: true},
 		{name: "negative statements", input: "mode: set\na.go:1.1,2.2 -1 1\n", wantErr: true},
 		{name: "no colon", input: "mode: set\njunk line\n", wantErr: true},
+		{name: "negative start line", input: "mode: set\na.go:-2000000000.1,5.2 1 1\n", wantErr: true},
+		{name: "zero start line", input: "mode: set\na.go:0.1,5.2 1 1\n", wantErr: true},
+		{name: "end before start", input: "mode: set\na.go:9.1,5.2 1 1\n", wantErr: true},
+		{name: "implausibly large line", input: "mode: set\na.go:1.1,2000000000.2 1 1\n", wantErr: true},
 	}
 
 	for _, tt := range tests {

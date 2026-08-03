@@ -82,7 +82,7 @@ func New(cfg Config) *Server {
 	// Every page is its own template set sharing the layout and partials,
 	// so pages can define "content" without colliding.
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"index.html", "repo.html", "upload.html"} {
+	for _, name := range []string{"index.html", "repo.html", "upload.html", "source.html"} {
 		pages[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templatesFS,
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
@@ -111,6 +111,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
+	s.mux.HandleFunc("GET /uploads/{id}/files/{path...}", s.handleSource)
 }
 
 // cacheStatic adds cache headers for the embedded assets. URLs carry a

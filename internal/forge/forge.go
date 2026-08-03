@@ -51,6 +51,10 @@ type Forge interface {
 	// GetDefaultBranch returns the repository's main branch name, used
 	// when auto-registering repos on first upload.
 	GetDefaultBranch(ctx context.Context, repoSlug string) (string, error)
+	// GetFileContent returns a file's raw content at a commit, used by
+	// the source view. Returns ErrRepoNotFound-wrapped errors when the
+	// file does not exist at that commit.
+	GetFileContent(ctx context.Context, repoSlug, commitSHA, path string) ([]byte, error)
 }
 
 // Factory builds a Forge from per-repo credentials (as stored in
