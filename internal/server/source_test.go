@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -172,6 +173,127 @@ func TestSourceViewSecurity(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestSourceViewTrimsUnmappedPrefixes(t *testing.T) {
+	// An upload with no stored path_prefix (uploads made before the
+	// server stored prefixes, or CI checkout paths in Cobertura reports)
+	// records qualified paths; the view finds the repo file by probing
+	// with leading directories trimmed.
+	f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+	f.forge.Files = map[string]string{"m/a.go": aGoSource}
+	rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload failed: %d %s", rec.Code, rec.Body)
+	}
+	body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+	if !strings.Contains(body, "codeline hit") {
+		t.Errorf("trimmed lookup did not render source: %s", body)
+	}
+	// Probes the recorded path first, then the trimmed variant — and
+	// never a bare filename.
+	want := []string{"example.com/m/a.go", "m/a.go"}
+	if !reflect.DeepEqual(f.forge.FileCalls, want) {
+		t.Errorf("forge calls = %v, want %v", f.forge.FileCalls, want)
+	}
+	// The canonical cache key serves the next view without re-probing.
+	doGet(t, f, "/uploads/1/files/example.com/m/a.go")
+	if got := len(f.forge.FileCalls); got != 2 {
+		t.Errorf("forge calls after cached view = %d, want 2", got)
+	}
+
+	t.Run("non-404 errors stop probing", func(t *testing.T) {
+		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+		f.forge.FileErr = errFake
+		doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
+		doGet(t, f, "/uploads/1/files/example.com/m/a.go")
+		if got := len(f.forge.FileCalls); got != 1 {
+			t.Errorf("forge calls = %d, want 1 (no probing after a real error)", got)
+		}
+	})
+
+	t.Run("uploads with a stored prefix never probe", func(t *testing.T) {
+		// When path_prefix was applied the repo path is authoritative: a
+		// miss must fail closed instead of guessing a same-suffix file.
+		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+		f.forge.Files = map[string]string{"y/z.go": aGoSource}
+		profileData := "mode: set\nexample.com/x/y/z.go:1.1,2.2 1 1\n"
+		doUpload(t, f, "secret-token", map[string]string{
+			"commit": "c1", "branch": "main", "path_prefix": "example.com",
+		}, profileData)
+		body := doGet(t, f, "/uploads/1/files/example.com/x/y/z.go").Body.String()
+		if !strings.Contains(body, "Source is unavailable") {
+			t.Errorf("prefixed upload must fail closed, got: %s", body)
+		}
+		if !reflect.DeepEqual(f.forge.FileCalls, []string{"x/y/z.go"}) {
+			t.Errorf("forge calls = %v, want just the exact path", f.forge.FileCalls)
+		}
+	})
+
+	t.Run("misses are cached: no re-probing on later views", func(t *testing.T) {
+		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+		doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
+		doGet(t, f, "/uploads/1/files/example.com/m/a.go")
+		probes := len(f.forge.FileCalls)
+		if probes == 0 {
+			t.Fatal("expected at least one probe")
+		}
+		body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+		if got := len(f.forge.FileCalls); got != probes {
+			t.Errorf("forge calls after miss-cached view = %d, want %d", got, probes)
+		}
+		if !strings.Contains(body, "was not found at commit") {
+			t.Errorf("cached miss must still explain itself: %s", body)
+		}
+	})
+
+	t.Run("too-short trimmed matches are rejected", func(t *testing.T) {
+		// testProfile covers lines up to 9; a same-suffix file with only
+		// 2 lines is a collision with an unrelated file, not a match.
+		f := newFixture(t, map[string]string{"username": "u", "app_password": "p"})
+		f.forge.Files = map[string]string{"m/a.go": "package other\n"}
+		doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
+		body := doGet(t, f, "/uploads/1/files/example.com/m/a.go").Body.String()
+		if !strings.Contains(body, "Source is unavailable") {
+			t.Errorf("short collision must not render: %s", body)
+		}
+	})
+}
+
+func TestSourceCandidates(t *testing.T) {
+	got := sourceCandidates("a/b/c/d.go")
+	want := []string{"a/b/c/d.go", "b/c/d.go", "c/d.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("candidates = %v, want %v", got, want)
+	}
+	// Single-segment paths are asked for as-is, nothing to trim.
+	if got := sourceCandidates("main.go"); !reflect.DeepEqual(got, []string{"main.go"}) {
+		t.Errorf("candidates = %v, want just main.go", got)
+	}
+	// Deep paths are capped so one page view cannot hammer the forge,
+	// and the budget covers both ends: shallow trims for module paths,
+	// deep trims for CI checkout prefixes.
+	deep := strings.Repeat("x/", 20) + "y/z.go"
+	capped := sourceCandidates(deep)
+	if len(capped) != maxSourceProbes {
+		t.Errorf("deep path candidates = %d, want %d", len(capped), maxSourceProbes)
+	}
+	if capped[len(capped)-1] != "y/z.go" {
+		t.Errorf("deepest trim = %q, want the shortest suffix y/z.go", capped[len(capped)-1])
+	}
+
+	// The Jenkins-style case from review: the true repo path sits deeper
+	// than the head window and must still be probed.
+	jenkins := "var/lib/jenkins/workspace/acme/checkout/src/main/internal/util/strings.go"
+	found := false
+	for _, c := range sourceCandidates(jenkins) {
+		if c == "internal/util/strings.go" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("deep CI prefix candidates %v miss internal/util/strings.go", sourceCandidates(jenkins))
+	}
 }
 
 func TestRenderSourceLines(t *testing.T) {

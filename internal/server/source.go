@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -65,7 +66,7 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	source, unavailable := s.fetchSource(r, repo, upload, file.Path)
+	source, unavailable := s.fetchSource(r, repo, upload, file)
 	data := map[string]any{
 		"Repo":        repo,
 		"Upload":      upload,
@@ -85,11 +86,11 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 // never goes stale and keeps forge API usage down. On any failure it
 // returns a human-readable reason instead; the page then falls back to
 // the uncovered-ranges summary.
-func (s *Server) fetchSource(r *http.Request, repo *store.Repo, u *store.Upload, profilePath string) ([]byte, string) {
+func (s *Server) fetchSource(r *http.Request, repo *store.Repo, u *store.Upload, f *store.UploadFile) ([]byte, string) {
 	// Profile paths may be module-qualified; the forge wants repo paths.
-	repoPath := profilePath
+	repoPath := f.Path
 	if u.PathPrefix != "" {
-		repoPath = strings.TrimPrefix(profilePath, u.PathPrefix+"/")
+		repoPath = strings.TrimPrefix(f.Path, u.PathPrefix+"/")
 	}
 	// Profile content is attacker-influencable by any token holder; a
 	// path with dot segments could normalize into a different forge API
@@ -102,6 +103,15 @@ func (s *Server) fetchSource(r *http.Request, repo *store.Repo, u *store.Upload,
 	if cached, err := s.blobs.Get(r.Context(), cacheKey); err == nil {
 		return s.validateSource(cached)
 	}
+	// A commit's tree is immutable, so "not found" verdicts are cached
+	// too — otherwise every view of an unresolvable file would replay
+	// the whole probe sequence against the forge API, and this page
+	// needs no authentication.
+	missKey := fmt.Sprintf("source-miss/%d/%s/%s", repo.ID, u.CommitSHA, repoPath)
+	notFound := fmt.Sprintf("%s was not found at commit %s on %s", repoPath, u.CommitSHA, repo.Forge)
+	if _, err := s.blobs.Get(r.Context(), missKey); err == nil {
+		return nil, notFound
+	}
 
 	fg, err := s.forgeFor(repo)
 	if err != nil {
@@ -110,17 +120,58 @@ func (s *Server) fetchSource(r *http.Request, repo *store.Repo, u *store.Upload,
 	if fg == nil {
 		return nil, "no forge credentials are configured for this repo"
 	}
-	content, err := fg.GetFileContent(r.Context(), repo.Slug, u.CommitSHA, repoPath)
-	if errors.Is(err, forge.ErrRepoNotFound) {
-		return nil, fmt.Sprintf("%s was not found at commit %s on %s", repoPath, u.CommitSHA, repo.Forge)
+
+	// Probing with trimmed prefixes exists for uploads whose stored
+	// path_prefix could not map the recorded path to a repo path. When a
+	// prefix was applied, the result is authoritative: a 404 then means
+	// the file genuinely is not at that commit, and probing could only
+	// ever surface a wrong same-suffix file.
+	candidates := []string{repoPath}
+	if u.PathPrefix == "" {
+		candidates = sourceCandidates(repoPath)
 	}
-	if errors.Is(err, forge.ErrNotImplemented) {
-		return nil, "this forge does not support reading files"
+	var content []byte
+	found := false
+	var fetchErr error
+	for _, cand := range candidates {
+		b, err := fg.GetFileContent(r.Context(), repo.Slug, u.CommitSHA, cand)
+		if err != nil {
+			fetchErr = err
+			if errors.Is(err, forge.ErrRepoNotFound) {
+				continue
+			}
+			break
+		}
+		// A trimmed candidate is a guess; reject it when the file is
+		// shorter than the lines the profile claims to cover — that is
+		// a same-suffix collision with an unrelated file, and rendering
+		// it would overlay meaningless coverage.
+		if cand != repoPath && countLines(b) < maxBlockLine(f.Blocks) {
+			s.log.Info("trimmed source candidate rejected as too short",
+				"repo", repo.Slug, "recorded", repoPath, "candidate", cand)
+			fetchErr = forge.ErrRepoNotFound
+			continue
+		}
+		if cand != repoPath {
+			s.log.Info("source resolved via trimmed path",
+				"repo", repo.Slug, "recorded", repoPath, "resolved", cand)
+		}
+		content, found = b, true
+		break
 	}
-	if err != nil {
-		// Forge error text can carry API URLs and response bodies; log it
-		// but keep the page generic.
-		s.log.Warn("fetch source", "repo", repo.Slug, "path", repoPath, "err", err)
+	if !found {
+		if fetchErr == nil || errors.Is(fetchErr, forge.ErrRepoNotFound) {
+			if err := s.blobs.Put(r.Context(), missKey, []byte{'-'}); err != nil {
+				s.log.Warn("cache source miss", "key", missKey, "err", err)
+			}
+			return nil, notFound
+		}
+		if errors.Is(fetchErr, forge.ErrNotImplemented) {
+			return nil, "this forge does not support reading files"
+		}
+		// Forge error text can carry API URLs and response bodies; log
+		// it but keep the page generic.
+		s.log.Warn("fetch source", "repo", repo.Slug, "path", repoPath, "err", fetchErr)
 		return nil, "fetching the file from the forge failed"
 	}
 	content, reason := s.validateSource(content)
@@ -131,6 +182,57 @@ func (s *Server) fetchSource(r *http.Request, repo *store.Repo, u *store.Upload,
 		s.log.Warn("cache source", "key", cacheKey, "err", err)
 	}
 	return content, ""
+}
+
+// maxSourceProbes bounds forge API calls per source-view render: the
+// recorded path plus a handful of trimmed variants.
+const maxSourceProbes = 8
+
+// sourceCandidates lists the repo paths to ask the forge for, in order.
+// Profiles frequently record paths with extra leading directories that
+// the stored path_prefix did not cover — a Go module path on uploads
+// made before prefixes were stored, or a CI checkout directory in a
+// Cobertura report. Trimming leading segments one at a time finds the
+// repo path without any configuration. Trimmed candidates keep at
+// least two segments so a bare filename cannot silently match an
+// unrelated file at the repo root; every candidate is a suffix of the
+// already-validated path, so it stays safe to request. When there are
+// more suffixes than the probe budget, both ends are kept: short trims
+// resolve module-qualified paths, deep trims resolve CI checkout
+// prefixes — the middle is the least likely to be a repo root.
+func sourceCandidates(repoPath string) []string {
+	segs := strings.Split(repoPath, "/")
+	var suffixes []string
+	for i := 1; i <= len(segs)-2; i++ {
+		suffixes = append(suffixes, strings.Join(segs[i:], "/"))
+	}
+	if len(suffixes) > maxSourceProbes-1 {
+		head := suffixes[:(maxSourceProbes-1)/2]
+		tail := suffixes[len(suffixes)-(maxSourceProbes-1-len(head)):]
+		suffixes = append(head, tail...)
+	}
+	return append([]string{repoPath}, suffixes...)
+}
+
+// countLines reports how many lines content has, counting a trailing
+// partial line.
+func countLines(b []byte) int {
+	n := bytes.Count(b, []byte{'\n'})
+	if len(b) > 0 && b[len(b)-1] != '\n' {
+		n++
+	}
+	return n
+}
+
+// maxBlockLine is the highest line the profile claims for the file.
+func maxBlockLine(blocks []profile.Block) int {
+	max := 0
+	for _, b := range blocks {
+		if b.EndLine > max {
+			max = b.EndLine
+		}
+	}
+	return max
 }
 
 // safeRepoPath accepts only plain relative paths: no empty, "." or ".."

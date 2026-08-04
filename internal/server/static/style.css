@@ -51,7 +51,7 @@ h2 { font-size: 16px; margin: 26px 0 10px; }
 .sub { color: var(--text-2); margin: 0 0 18px; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-  box-shadow: var(--shadow); }
+  box-shadow: var(--shadow); overflow-x: auto; }
 
 /* stat summary row */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 22px; }
@@ -70,6 +70,13 @@ tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--surface2); }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td code, .mono { font-family: var(--mono); font-size: 12.5px; }
+/* Profile paths can be arbitrarily long with no natural break points
+   (CI temp dirs, nuget caches); let them wrap anywhere so the table
+   never forces the card wider than the page. The first column keeps a
+   floor so narrow screens scroll the card instead of crushing the
+   path into a one-character-per-line strip. */
+td code, td .mono, td.mono { overflow-wrap: anywhere; }
+td:first-child { min-width: 220px; }
 .muted { color: var(--text-2); }
 .small { font-size: 12.5px; }
 .empty { color: var(--text-2); padding: 28px; text-align: center; }
