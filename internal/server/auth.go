@@ -109,14 +109,23 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, sanitizeNext(r.FormValue("next")), http.StatusFound)
 		return
 	}
-	if r.FormValue("denied") == "1" {
+	denied := r.FormValue("denied") == "1"
+	if denied {
 		w.WriteHeader(http.StatusForbidden)
+	}
+	// The tracked-workspace slugs tell a denied member which workspace
+	// to ask about, but to anyone else they disclose who uses this
+	// instance — so they render only after a real Bitbucket identity
+	// was rejected, never on the plain sign-in page.
+	var workspaces []string
+	if denied {
+		workspaces = s.trackedWorkspaces(r)
 	}
 	s.render(w, r, "login.html", map[string]any{
 		"Failed":     r.FormValue("error") == "1",
-		"Denied":     r.FormValue("denied") == "1",
+		"Denied":     denied,
 		"Next":       sanitizeNext(r.FormValue("next")),
-		"Workspaces": s.trackedWorkspaces(r),
+		"Workspaces": workspaces,
 	})
 }
 
