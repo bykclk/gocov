@@ -33,6 +33,14 @@ type UpdateCall struct {
 	Body      string
 }
 
+// ReportCall records one PublishReport invocation.
+type ReportCall struct {
+	RepoSlug    string
+	CommitSHA   string
+	Report      forge.Report
+	Annotations []forge.Annotation
+}
+
 // Forge records calls and returns configurable errors.
 type Forge struct {
 	mu sync.Mutex
@@ -49,8 +57,9 @@ type Forge struct {
 	DefaultBranchErr error
 	// Files maps paths to contents for GetFileContent; missing paths
 	// yield ErrRepoNotFound. FileErr wins when set.
-	Files   map[string]string
-	FileErr error
+	Files     map[string]string
+	FileErr   error
+	ReportErr error // returned by PublishReport
 
 	StatusCalls        []StatusCall
 	CommentCalls       []CommentCall
@@ -59,6 +68,7 @@ type Forge struct {
 	DiffCalls          []DiffCall
 	DefaultBranchCalls []string // repo slugs
 	FileCalls          []string // paths
+	ReportCalls        []ReportCall
 
 	// comments simulates the PR comment store: posted and updated bodies
 	// keyed by a fake incremental id, so FindPRComment behaves like the
@@ -172,6 +182,16 @@ func (f *Forge) GetPRDiff(_ context.Context, repoSlug, prID string) (string, err
 		return "", forge.ErrNotImplemented
 	}
 	return f.DiffText, nil
+}
+
+func (f *Forge) PublishReport(_ context.Context, repoSlug, commitSHA string, report forge.Report, annotations []forge.Annotation) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ReportErr != nil {
+		return f.ReportErr
+	}
+	f.ReportCalls = append(f.ReportCalls, ReportCall{repoSlug, commitSHA, report, annotations})
+	return nil
 }
 
 var _ forge.Forge = (*Forge)(nil)

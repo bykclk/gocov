@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/bykclk/gocov/internal/forge"
@@ -267,4 +269,153 @@ func TestFactoryValidation(t *testing.T) {
 	if f.(*Client).BaseURL != DefaultBaseURL {
 		t.Errorf("base URL = %q", f.(*Client).BaseURL)
 	}
+}
+
+func TestPublishReport(t *testing.T) {
+	type call struct {
+		method, path string
+		body         []byte
+	}
+	var calls []call
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		calls = append(calls, call{r.Method, r.URL.Path, body})
+		if r.Method == http.MethodDelete {
+			// First publish: nothing to delete yet.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	report := forge.Report{
+		Title:   "gocov coverage",
+		Details: "2 of 3 changed lines are covered by tests.",
+		Result:  forge.ReportPassed,
+		Link:    "https://gocov.example/uploads/1",
+		Data: []forge.ReportData{
+			{Title: "Total coverage", Type: forge.DataPercentage, Value: 80.0},
+			{Title: "Uncovered changed lines", Type: forge.DataNumber, Value: 1.0},
+			{Title: "Statements", Type: forge.DataText, Value: "8 / 10"},
+		},
+	}
+	annotations := []forge.Annotation{
+		{Path: "m/a.go", Line: 9, Summary: "Line 9 of this change is not covered by tests"},
+		{Path: "m/b.go", Line: 4, Summary: "Lines 4–6 of this change are not covered by tests"},
+	}
+	if err := c.PublishReport(context.Background(), "acme/widgets", "abc123", report, annotations); err != nil {
+		t.Fatal(err)
+	}
+
+	base := "/repositories/acme/widgets/commit/abc123/reports/gocov"
+	if len(calls) != 3 {
+		t.Fatalf("got %d requests, want 3 (DELETE, PUT, POST)", len(calls))
+	}
+	if calls[0].method != http.MethodDelete || calls[0].path != base {
+		t.Errorf("call[0] = %s %s, want DELETE %s", calls[0].method, calls[0].path, base)
+	}
+	if calls[1].method != http.MethodPut || calls[1].path != base {
+		t.Errorf("call[1] = %s %s, want PUT %s", calls[1].method, calls[1].path, base)
+	}
+	if calls[2].method != http.MethodPost || calls[2].path != base+"/annotations" {
+		t.Errorf("call[2] = %s %s, want POST %s/annotations", calls[2].method, calls[2].path, base)
+	}
+
+	var putBody map[string]any
+	if err := json.Unmarshal(calls[1].body, &putBody); err != nil {
+		t.Fatal(err)
+	}
+	if putBody["report_type"] != "COVERAGE" || putBody["result"] != "PASSED" ||
+		putBody["reporter"] != "gocov" || putBody["title"] != "gocov coverage" ||
+		putBody["link"] != "https://gocov.example/uploads/1" {
+		t.Errorf("report payload = %v", putBody)
+	}
+	data, _ := putBody["data"].([]any)
+	if len(data) != 3 {
+		t.Fatalf("data fields = %d, want 3", len(data))
+	}
+	first, _ := data[0].(map[string]any)
+	if first["type"] != "PERCENTAGE" || first["title"] != "Total coverage" || first["value"] != 80.0 {
+		t.Errorf("data[0] = %v", first)
+	}
+	if second, _ := data[1].(map[string]any); second["type"] != "NUMBER" {
+		t.Errorf("data[1] = %v", second)
+	}
+	if third, _ := data[2].(map[string]any); third["type"] != "TEXT" || third["value"] != "8 / 10" {
+		t.Errorf("data[2] = %v", third)
+	}
+
+	var annBody []map[string]any
+	if err := json.Unmarshal(calls[2].body, &annBody); err != nil {
+		t.Fatal(err)
+	}
+	if len(annBody) != 2 {
+		t.Fatalf("annotations = %d, want 2", len(annBody))
+	}
+	a := annBody[0]
+	if a["external_id"] != "gocov-001" || a["annotation_type"] != "CODE_SMELL" ||
+		a["severity"] != "MEDIUM" || a["path"] != "m/a.go" || a["line"] != 9.0 ||
+		a["summary"] != "Line 9 of this change is not covered by tests" {
+		t.Errorf("annotation[0] = %v", a)
+	}
+	if annBody[1]["external_id"] != "gocov-002" {
+		t.Errorf("annotation[1] external_id = %v", annBody[1]["external_id"])
+	}
+}
+
+func TestPublishReportWithoutAnnotations(t *testing.T) {
+	var methods []string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		// Existing report from an earlier upload: delete succeeds.
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	report := forge.Report{Title: "gocov coverage", Details: "d"}
+	if err := c.PublishReport(context.Background(), "acme/widgets", "abc123", report, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(methods) != 2 || methods[0] != http.MethodDelete || methods[1] != http.MethodPut {
+		t.Errorf("methods = %v, want [DELETE PUT] and no annotation POST", methods)
+	}
+}
+
+func TestPublishReportErrors(t *testing.T) {
+	t.Run("delete fails", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "boom", http.StatusInternalServerError)
+		})
+		err := c.PublishReport(context.Background(), "a/b", "c", forge.Report{}, nil)
+		if err == nil || !strings.Contains(err.Error(), "500") {
+			t.Errorf("err = %v, want 500", err)
+		}
+	})
+	t.Run("put fails", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			http.Error(w, "bad", http.StatusBadRequest)
+		})
+		err := c.PublishReport(context.Background(), "a/b", "c", forge.Report{}, nil)
+		if err == nil || !strings.Contains(err.Error(), "400") {
+			t.Errorf("err = %v, want 400", err)
+		}
+	})
+	t.Run("unknown data type", func(t *testing.T) {
+		c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+		err := c.PublishReport(context.Background(), "a/b", "c", forge.Report{
+			Data: []forge.ReportData{{Title: "x", Type: "bogus", Value: 1}},
+		}, nil)
+		if err == nil || !strings.Contains(err.Error(), "bogus") {
+			t.Errorf("err = %v, want unknown data type", err)
+		}
+	})
 }

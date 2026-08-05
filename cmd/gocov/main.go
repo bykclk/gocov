@@ -109,6 +109,9 @@ func run(args []string) error {
 		fmt.Printf("diff coverage: %s\n", resp.DiffStatus)
 	}
 	fmt.Printf("build status: %s\n", resp.BuildStatus)
+	if resp.CodeInsights != "" { // empty when talking to an older server
+		fmt.Printf("code insights: %s\n", resp.CodeInsights)
+	}
 	if resp.PRComment != "" {
 		fmt.Printf("pr comment: %s\n", resp.PRComment)
 	}

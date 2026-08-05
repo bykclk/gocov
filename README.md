@@ -38,6 +38,17 @@ format is detected from the uploaded content.
   intersects changed lines with coverage blocks, and posts a PR comment
   listing uncovered changed lines — repeated uploads update the same
   comment instead of stacking new ones
+- Coverage inside the PR, via Bitbucket Code Insights: every upload
+  attaches a report card to its commit (total coverage, delta, diff
+  coverage, gate verdict) that Bitbucket shows in the pull request's
+  Reports panel, and PR uploads annotate uncovered changed lines right
+  in the diff view — reviewers see untested code exactly where they are
+  reviewing it, with no plugin on the Bitbucket side. Re-uploads replace
+  the report and annotations in place; no coverage product on Bitbucket
+  Cloud ships this today
+
+  _[screenshot: coverage report card and inline annotations in a
+  Bitbucket PR]_
 
 The architecture is deliberately extensible: coverage formats sit behind
 `profile.Parser`, forges behind `forge.Forge`, raw profile storage behind

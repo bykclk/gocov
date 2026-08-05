@@ -28,7 +28,8 @@ type uploadResponse struct {
 	CoveredStmts int64    `json:"covered_stmts"`
 	TotalStmts   int64    `json:"total_stmts"`
 	DeltaPct     *float64 `json:"delta_pct,omitempty"`
-	BuildStatus  string   `json:"build_status"` // "posted", "skipped" or "error: ..."
+	BuildStatus  string   `json:"build_status"`  // "posted", "skipped" or "error: ..."
+	CodeInsights string   `json:"code_insights"` // "posted", "skipped" or "error: ..."
 	// RepoCreated reports that this upload auto-registered the repo
 	// through a workspace token.
 	RepoCreated bool `json:"repo_created,omitempty"`
@@ -263,6 +264,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 		TotalStmts:   total,
 		DeltaPct:     deltaPct,
 		BuildStatus:  s.pushBuildStatus(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
+		CodeInsights: s.pushCodeInsights(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
 		RepoCreated:  repoCreated,
 		DiffStatus:   diffStatus,
 		PRComment:    s.pushPRComment(r.Context(), fg, fgErr, repo, upload, deltaPct, gate),
@@ -547,6 +549,114 @@ func (s *Server) pushBuildStatus(ctx context.Context, fg forge.Forge, fgErr erro
 		return "error: " + err.Error()
 	}
 	return "posted"
+}
+
+// insightsMaxAnnotations caps report annotations at the forge API's
+// per-request limit, keeping the whole publish to one bulk request.
+const insightsMaxAnnotations = 100
+
+// pushCodeInsights attaches a coverage report card to the commit and, for
+// PR uploads, annotates uncovered changed lines inline in the diff. Best
+// effort like the build status: failures land in the response field and
+// the log, never in the upload result.
+func (s *Server) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr error, repo *store.Repo, u *store.Upload, deltaPct *float64, gate gateResult) string {
+	if fgErr != nil {
+		return "error: " + fgErr.Error()
+	}
+	if fg == nil {
+		s.log.Debug("code insights skipped: no forge credentials", "repo", repo.Slug)
+		return "skipped"
+	}
+	report, annotations := s.insightsReport(u, deltaPct, gate)
+	err := fg.PublishReport(ctx, repo.Slug, u.CommitSHA, report, annotations)
+	if errors.Is(err, forge.ErrNotImplemented) {
+		return "skipped"
+	}
+	if err != nil {
+		s.log.Warn("publish code insights report", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
+		return "error: " + err.Error()
+	}
+	return "posted"
+}
+
+// insightsReport builds the report card and its annotations. The data
+// fields stay well under the forge API's cap of ten; annotations exist
+// only for PR uploads, and only on uncovered changed lines.
+func (s *Server) insightsReport(u *store.Upload, deltaPct *float64, gate gateResult) (forge.Report, []forge.Annotation) {
+	data := []forge.ReportData{
+		{Title: "Total coverage", Type: forge.DataPercentage, Value: u.TotalPct},
+	}
+	if deltaPct != nil {
+		data = append(data, forge.ReportData{
+			Title: "Change vs base", Type: forge.DataText, Value: fmt.Sprintf("%+.1f%%", *deltaPct)})
+	}
+
+	details := "Test coverage uploaded by gocov."
+	var annotations []forge.Annotation
+	if dc := u.DiffCoverage; dc != nil {
+		if dc.TotalLines == 0 {
+			details = "No executable lines were changed."
+		} else {
+			data = append(data,
+				forge.ReportData{Title: "Diff coverage", Type: forge.DataPercentage, Value: dc.Percent()},
+				forge.ReportData{Title: "Uncovered changed lines", Type: forge.DataNumber,
+					Value: float64(dc.TotalLines - dc.CoveredLines)},
+			)
+			var dropped int
+			annotations, dropped = insightsAnnotations(dc)
+			details = fmt.Sprintf("%d of %d changed lines are covered by tests.", dc.CoveredLines, dc.TotalLines)
+			if dropped > 0 {
+				details += fmt.Sprintf(" +%d more uncovered ranges are not annotated — the PR comment lists them all.", dropped)
+			}
+		}
+	}
+	data = append(data, forge.ReportData{
+		Title: "Statements", Type: forge.DataText, Value: fmt.Sprintf("%d / %d", u.CoveredStmts, u.TotalStmts)})
+
+	result := ""
+	if gate.configured {
+		data = append(data, forge.ReportData{Title: "Gate", Type: forge.DataText, Value: gate.String()})
+		if gate.failed() {
+			result = forge.ReportFailed
+		} else {
+			result = forge.ReportPassed
+		}
+	}
+
+	return forge.Report{
+		Title:   "gocov coverage",
+		Details: details,
+		Result:  result,
+		Link:    s.uploadURL(u),
+		Data:    data,
+	}, annotations
+}
+
+// insightsAnnotations turns the diff-coverage result into one annotation
+// per contiguous uncovered range, anchored at the range start and ordered
+// by file path (dc.Files is path-sorted). Ranges beyond the cap are
+// counted, not annotated.
+func insightsAnnotations(dc *diffcov.Result) (anns []forge.Annotation, dropped int) {
+	for _, f := range dc.Files {
+		lines := f.UncoveredLines
+		for i := 0; i < len(lines); {
+			j := i
+			for j+1 < len(lines) && lines[j+1] == lines[j]+1 {
+				j++
+			}
+			if len(anns) == insightsMaxAnnotations {
+				dropped++
+			} else {
+				summary := fmt.Sprintf("Line %d of this change is not covered by tests", lines[i])
+				if j > i {
+					summary = fmt.Sprintf("Lines %d–%d of this change are not covered by tests", lines[i], lines[j])
+				}
+				anns = append(anns, forge.Annotation{Path: f.Path, Line: lines[i], Summary: summary})
+			}
+			i = j + 1
+		}
+	}
+	return anns, dropped
 }
 
 // prCommentMarker identifies gocov's own comment on a PR; every body
