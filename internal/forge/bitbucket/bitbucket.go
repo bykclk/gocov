@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -361,7 +362,17 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 	}
 	payload["data"] = data
 	if err := c.send(ctx, http.MethodPut, base, payload); err != nil {
-		return err
+		// Bitbucket rejects link values it cannot resolve publicly
+		// (e.g. the default http://localhost:8080 base URL) with a 400
+		// and drops the whole report. A report without its link beats
+		// no report: retry once link-less and keep going.
+		if report.Link == "" || !isInvalidLinkError(err) {
+			return err
+		}
+		delete(payload, "link")
+		if err := c.send(ctx, http.MethodPut, base, payload); err != nil {
+			return err
+		}
 	}
 
 	if len(annotations) == 0 {
@@ -408,6 +419,14 @@ func (c *Client) deleteReport(ctx context.Context, path string) error {
 	return nil
 }
 
+// isInvalidLinkError recognizes Bitbucket's rejection of a report link,
+// e.g. `{"error": {"message": "link is not a valid URL"}}` with a 400.
+func isInvalidLinkError(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.status == http.StatusBadRequest &&
+		strings.Contains(ae.msg, "link is not a valid URL")
+}
+
 func (c *Client) send(ctx context.Context, method, path string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -427,9 +446,21 @@ func (c *Client) send(ctx context.Context, method, path string, payload any) err
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("bitbucket: %s returned %d: %s", path, resp.StatusCode, msg)
+		return &apiError{
+			status: resp.StatusCode,
+			msg:    fmt.Sprintf("bitbucket: %s returned %d: %s", path, resp.StatusCode, msg),
+		}
 	}
 	return nil
 }
+
+// apiError carries the HTTP status of a failed Bitbucket call so callers
+// can react to specific rejections.
+type apiError struct {
+	status int
+	msg    string
+}
+
+func (e *apiError) Error() string { return e.msg }
 
 var _ forge.Forge = (*Client)(nil)

@@ -423,3 +423,74 @@ func TestPublishReportErrors(t *testing.T) {
 		}
 	})
 }
+
+func TestPublishReportRetriesWithoutRejectedLink(t *testing.T) {
+	type call struct {
+		method string
+		body   []byte
+	}
+	var calls []call
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		calls = append(calls, call{r.Method, body})
+		switch {
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodPut && strings.Contains(string(body), `"link"`):
+			// Bitbucket refuses links it cannot resolve publicly
+			// (localhost) and drops the whole report.
+			http.Error(w, `{"error": {"message": "link is not a valid URL"}}`, http.StatusBadRequest)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	report := forge.Report{Title: "gocov coverage", Link: "http://localhost:8080/uploads/1"}
+	anns := []forge.Annotation{{Path: "a.go", Line: 1, Summary: "s"}}
+	if err := c.PublishReport(context.Background(), "acme/widgets", "abc", report, anns); err != nil {
+		t.Fatalf("want link-less retry to succeed, got %v", err)
+	}
+
+	methods := make([]string, len(calls))
+	for i, cl := range calls {
+		methods[i] = cl.method
+	}
+	want := []string{http.MethodDelete, http.MethodPut, http.MethodPut, http.MethodPost}
+	if strings.Join(methods, ",") != strings.Join(want, ",") {
+		t.Fatalf("requests = %v, want %v", methods, want)
+	}
+	var retry map[string]any
+	if err := json.Unmarshal(calls[2].body, &retry); err != nil {
+		t.Fatal(err)
+	}
+	if _, hasLink := retry["link"]; hasLink {
+		t.Errorf("retry payload still carries the link: %v", retry)
+	}
+	if retry["title"] != "gocov coverage" {
+		t.Errorf("retry payload = %v", retry)
+	}
+}
+
+func TestPublishReportOtherBadRequestsDoNotRetry(t *testing.T) {
+	var puts int
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNotFound)
+		case http.MethodPut:
+			puts++
+			http.Error(w, `{"error": {"message": "data value is invalid"}}`, http.StatusBadRequest)
+		default:
+			w.WriteHeader(http.StatusOK)
+		}
+	})
+
+	report := forge.Report{Title: "t", Link: "http://localhost:8080/uploads/1"}
+	err := c.PublishReport(context.Background(), "a/b", "c", report, nil)
+	if err == nil || !strings.Contains(err.Error(), "400") {
+		t.Fatalf("err = %v, want the 400 surfaced", err)
+	}
+	if puts != 1 {
+		t.Errorf("PUT retried %d times on an unrelated 400, want no retry", puts-1)
+	}
+}
