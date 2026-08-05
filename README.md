@@ -270,6 +270,24 @@ its own — for build statuses, PR comments, diff coverage and default
 branch detection. Per-repo credentials (`repo update -bb-username ...`)
 take precedence.
 
+### Bitbucket token permissions
+
+The bot credential (a scoped API token, or a legacy app password) needs:
+
+| capability | API token scopes | app password checkboxes |
+|---|---|---|
+| build status, Code Insights report + annotations, source view, default branch | `read:repository:bitbucket`, `write:repository:bitbucket` | Repositories: Read, Write |
+| PR diff coverage, PR comment | `read:pullrequest:bitbucket`, `write:pullrequest:bitbucket` | Pull requests: Read, Write |
+| updating the PR comment in place | `read:user:bitbucket` | Account: Read |
+
+Without the account/user scope everything still works, but gocov cannot
+recognize its own earlier comment, so every upload posts a **new** PR
+comment instead of updating the existing one. If comments stack, this
+scope is the fix.
+
+The OAuth consumer used for web UI sign-in is separate and needs the
+**Account: Read** and **Email** permissions on the consumer itself.
+
 ## Development
 
 ```sh
