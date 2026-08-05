@@ -343,3 +343,27 @@ func TestExpiredSessionDoesNotAuthenticate(t *testing.T) {
 		t.Errorf("expired session: status = %d, want login redirect", rec.Code)
 	}
 }
+
+func TestLoginPageHidesWorkspacesUntilDenied(t *testing.T) {
+	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
+
+	// The plain sign-in page is reachable without any session; the
+	// tracked-workspace slugs must not leak to strangers there.
+	rec := get(f, "/login")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "<code>acme</code>") {
+		t.Errorf("unauthenticated login page lists tracked workspaces:\n%s", rec.Body)
+	}
+
+	// After a real Bitbucket identity was rejected, the list helps the
+	// denied member ask for access to the right workspace.
+	rec = get(f, "/login?denied=1")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("denied status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "<code>acme</code>") {
+		t.Errorf("denied page misses the tracked workspaces:\n%s", rec.Body)
+	}
+}
