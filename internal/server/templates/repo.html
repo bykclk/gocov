@@ -37,13 +37,13 @@
 <div class="card trend-card">
 <svg class="trend" viewBox="0 0 {{.W}} {{.H}}" role="img"
      aria-label="Coverage trend on {{.Branch}}, latest {{.CurLabel}}">
-  {{range .Grid}}<line class="grid" x1="46" y1="{{.Y}}" x2="786" y2="{{.Y}}"></line>
-  <text class="lbl" x="40" y="{{.Y}}" text-anchor="end" dominant-baseline="middle">{{.Label}}</text>
+  {{range .Grid}}<line class="grid" x1="{{$.Trend.X0}}" y1="{{.Y}}" x2="{{$.Trend.X1}}" y2="{{.Y}}"></line>
+  <text class="lbl" x="{{$.Trend.X0}}" dx="-6" y="{{.Y}}" text-anchor="end" dominant-baseline="middle">{{.Label}}</text>
   {{end}}<path class="line" d="{{.Path}}"></path>
   {{range .Points}}<a href="/uploads/{{.ID}}"><circle class="pt{{if .GateFailed}} fail{{end}}" cx="{{.X}}" cy="{{.Y}}" r="3.5"><title>{{.Title}}</title></circle></a>
   {{end}}<text class="lbl cur" x="{{.CurX}}" y="{{.CurY}}" text-anchor="end">{{.CurLabel}}</text>
-  <text class="lbl" x="46" y="{{.H}}" dy="-6">{{.FirstDate}}</text>
-  <text class="lbl" x="786" y="{{.H}}" dy="-6" text-anchor="end">{{.LastDate}}</text>
+  <text class="lbl" x="{{.X0}}" y="{{.H}}" dy="-6">{{.FirstDate}}</text>
+  <text class="lbl" x="{{.X1}}" y="{{.H}}" dy="-6" text-anchor="end">{{.LastDate}}</text>
 </svg>
 </div>
 {{end}}

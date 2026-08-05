@@ -36,6 +36,7 @@ type trendGridLine struct {
 // trendView is the fully computed chart handed to the repo template.
 type trendView struct {
 	W, H       int
+	X0, X1     int // plot's left/right edge; gridlines and axis labels hang off these
 	Branch     string
 	Path       string // the polyline through every point
 	Points     []trendPoint
@@ -89,6 +90,8 @@ func newTrendView(branch string, ups []*store.Upload) *trendView {
 	v := &trendView{
 		W:         trendW,
 		H:         trendH,
+		X0:        trendPadL,
+		X1:        trendW - trendPadR,
 		Branch:    branch,
 		FirstDate: series[0].CreatedAt.Format("2006-01-02"),
 		LastDate:  series[len(series)-1].CreatedAt.Format("2006-01-02"),

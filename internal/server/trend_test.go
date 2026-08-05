@@ -66,6 +66,10 @@ func TestTrendViewPointPlacement(t *testing.T) {
 	if v.Points[0].ID != 1 || v.Points[2].ID != 3 {
 		t.Errorf("point order = %d,%d,%d, want 1,2,3", v.Points[0].ID, v.Points[1].ID, v.Points[2].ID)
 	}
+	// The template hangs gridlines and axis labels off the plot edges.
+	if v.X0 != 46 || v.X1 != 786 {
+		t.Errorf("plot edges = %d,%d, want 46,786", v.X0, v.X1)
+	}
 	// X spans the plot area evenly: 46, 416, 786.
 	for i, want := range []float64{46, 416, 786} {
 		if v.Points[i].X != want {
