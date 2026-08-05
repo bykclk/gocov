@@ -52,6 +52,13 @@ format is detected from the uploaded content.
   _[screenshot: coverage report card and inline annotations in a
   Bitbucket PR]_
 
+- Coverage trend chart: the repo page graphs total coverage over the
+  branch's recent uploads (gate failures marked in red, every point
+  links to its upload) — rendered as inline SVG on the server, no
+  JavaScript chart library
+
+  _[screenshot: coverage trend chart on a repo page]_
+
 The architecture is deliberately extensible: coverage formats sit behind
 `profile.Parser`, forges behind `forge.Forge`, raw profile storage behind
 `blobstore.Store`, and the database schema stores a format-agnostic
