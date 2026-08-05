@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -304,6 +305,128 @@ func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path s
 	return data, nil
 }
 
+// reportID is the stable Code Insights report id: one report per commit,
+// so repeated uploads replace instead of stacking.
+const reportID = "gocov"
+
+var reportResults = map[string]string{
+	forge.ReportPassed: "PASSED",
+	forge.ReportFailed: "FAILED",
+}
+
+var reportDataTypes = map[string]string{
+	forge.DataPercentage: "PERCENTAGE",
+	forge.DataNumber:     "NUMBER",
+	forge.DataText:       "TEXT",
+}
+
+// PublishReport writes a Code Insights report onto a commit via
+// PUT /repositories/{slug}/commit/{sha}/reports/gocov, then bulk-uploads
+// the annotations. The report is deleted first: annotation bulk upload
+// only upserts by external_id, so without the delete a re-upload with
+// fewer findings would leave stale annotations in the PR diff.
+func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, report forge.Report, annotations []forge.Annotation) error {
+	base := fmt.Sprintf("/repositories/%s/commit/%s/reports/%s",
+		repoSlug, url.PathEscape(commitSHA), reportID)
+	if err := c.deleteReport(ctx, base); err != nil {
+		return err
+	}
+
+	payload := map[string]any{
+		"title":       report.Title,
+		"details":     report.Details,
+		"report_type": "COVERAGE",
+		"reporter":    "gocov",
+	}
+	if report.Link != "" {
+		payload["link"] = report.Link
+	}
+	if report.Result != "" {
+		result, ok := reportResults[report.Result]
+		if !ok {
+			return fmt.Errorf("bitbucket: unknown report result %q", report.Result)
+		}
+		payload["result"] = result
+	}
+	data := make([]map[string]any, 0, len(report.Data))
+	for _, d := range report.Data {
+		typeName, ok := reportDataTypes[d.Type]
+		if !ok {
+			return fmt.Errorf("bitbucket: unknown report data type %q", d.Type)
+		}
+		data = append(data, map[string]any{
+			"title": d.Title,
+			"type":  typeName,
+			"value": d.Value,
+		})
+	}
+	payload["data"] = data
+	if err := c.send(ctx, http.MethodPut, base, payload); err != nil {
+		// Bitbucket rejects link values it cannot resolve publicly
+		// (e.g. the default http://localhost:8080 base URL) with a 400
+		// and drops the whole report. A report without its link beats
+		// no report: retry once link-less and keep going.
+		if report.Link == "" || !isInvalidLinkError(err) {
+			return err
+		}
+		delete(payload, "link")
+		if err := c.send(ctx, http.MethodPut, base, payload); err != nil {
+			return err
+		}
+	}
+
+	if len(annotations) == 0 {
+		return nil
+	}
+	// One bulk request; the API accepts at most 100 annotations per POST
+	// and the server never sends more.
+	items := make([]map[string]any, 0, len(annotations))
+	for i, a := range annotations {
+		// An untested line is a smell, not an incident: CODE_SMELL at
+		// MEDIUM, never the vulnerability/critical tier.
+		item := map[string]any{
+			"external_id":     fmt.Sprintf("gocov-%03d", i+1),
+			"annotation_type": "CODE_SMELL",
+			"severity":        "MEDIUM",
+			"path":            a.Path,
+			"summary":         a.Summary,
+		}
+		if a.Line > 0 {
+			item["line"] = a.Line
+		}
+		items = append(items, item)
+	}
+	return c.send(ctx, http.MethodPost, base+"/annotations", items)
+}
+
+// deleteReport removes the commit's existing gocov report and, with it,
+// its annotations. A 404 just means there is nothing to delete yet.
+func (c *Client) deleteReport(ctx context.Context, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(c.Username, c.AppPassword)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("bitbucket: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("bitbucket: deleting %s returned %d: %s", path, resp.StatusCode, msg)
+	}
+	return nil
+}
+
+// isInvalidLinkError recognizes Bitbucket's rejection of a report link,
+// e.g. `{"error": {"message": "link is not a valid URL"}}` with a 400.
+func isInvalidLinkError(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && ae.status == http.StatusBadRequest &&
+		strings.Contains(ae.msg, "link is not a valid URL")
+}
+
 func (c *Client) send(ctx context.Context, method, path string, payload any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
@@ -323,9 +446,21 @@ func (c *Client) send(ctx context.Context, method, path string, payload any) err
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("bitbucket: %s returned %d: %s", path, resp.StatusCode, msg)
+		return &apiError{
+			status: resp.StatusCode,
+			msg:    fmt.Sprintf("bitbucket: %s returned %d: %s", path, resp.StatusCode, msg),
+		}
 	}
 	return nil
 }
+
+// apiError carries the HTTP status of a failed Bitbucket call so callers
+// can react to specific rejections.
+type apiError struct {
+	status int
+	msg    string
+}
+
+func (e *apiError) Error() string { return e.msg }
 
 var _ forge.Forge = (*Client)(nil)
