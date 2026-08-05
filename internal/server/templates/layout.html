@@ -14,7 +14,19 @@
   <a class="logo" href="/"><img class="mark" src="{{asset "/static/favicon.svg"}}" alt=""> gocov</a>
   <a class="item" href="/">Repos</a>
   <span class="spacer"></span>
+  {{with .CurrentUser}}
+  <span class="nav-user" title="{{.Email}}">{{.DisplayName}}</span>
+  <form class="nav-logout" method="post" action="/logout"><button class="btn" type="submit">Sign out</button></form>
+  {{end}}
 </div>
+{{if .AuthOpen}}
+<div class="banner" id="auth-banner">
+  <span>The web UI is open to anyone who can reach this server. To require sign-in, create a
+  Bitbucket OAuth consumer and set <code>GOCOV_OAUTH_BITBUCKET_KEY</code> and
+  <code>GOCOV_OAUTH_BITBUCKET_SECRET</code> &mdash; see the README.</span>
+  <button class="banner-close" type="button" data-dismiss="auth-banner" aria-label="Dismiss">&times;</button>
+</div>
+{{end}}
 <div class="wrap">
 {{block "content" .}}{{end}}
 </div>

@@ -1,5 +1,19 @@
 // Micro-interactions that htmx does not cover. Keep this file tiny.
 
+// Banner dismissal: <button data-dismiss="element-id"> hides the element
+// for the rest of the browser session (matching the "dismissable per
+// session" rule for the open-UI auth banner).
+document.querySelectorAll("[data-dismiss]").forEach((btn) => {
+  const el = document.getElementById(btn.getAttribute("data-dismiss"));
+  if (!el) return;
+  const key = "dismissed:" + el.id;
+  if (sessionStorage.getItem(key)) el.remove();
+  btn.addEventListener("click", () => {
+    sessionStorage.setItem(key, "1");
+    el.remove();
+  });
+});
+
 // Copy-to-clipboard: <button data-copy="#selector">Copy</button> copies the
 // value/text of the referenced element. Falls back to select+execCommand on
 // plain-http deployments where the Clipboard API is unavailable.

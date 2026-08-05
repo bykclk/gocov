@@ -24,6 +24,12 @@ services:
       # it for build statuses, PR comments and diff coverage.
       GOCOV_BITBUCKET_USERNAME: ${GOCOV_BITBUCKET_USERNAME:-}
       GOCOV_BITBUCKET_APP_PASSWORD: ${GOCOV_BITBUCKET_APP_PASSWORD:-}
+      # Optional Bitbucket OAuth consumer; setting both turns on (and
+      # from then on requires) web UI sign-in. See "Enable Bitbucket
+      # sign-in" in the README.
+      GOCOV_OAUTH_BITBUCKET_KEY: ${GOCOV_OAUTH_BITBUCKET_KEY:-}
+      GOCOV_OAUTH_BITBUCKET_SECRET: ${GOCOV_OAUTH_BITBUCKET_SECRET:-}
+      GOCOV_ALLOWED_WORKSPACES: ${GOCOV_ALLOWED_WORKSPACES:-}
     ports:
       - "8080:8080"
     healthcheck:

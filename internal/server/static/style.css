@@ -41,8 +41,28 @@ a:hover { text-decoration: underline; }
 .nav a.item { color: var(--nav-text); font-size: 13.5px; padding: 4px 2px; }
 .nav a.item.active { color: #fff; font-weight: 600; }
 .nav .spacer { flex: 1; }
+.nav .nav-user { color: var(--nav-text); font-size: 13px; }
+.nav .nav-logout { margin: 0; }
+.nav .nav-logout .btn { background: transparent; color: var(--nav-text); border-color: var(--nav-text);
+  padding: 4px 10px; font-size: 12.5px; }
 .crumbs { color: var(--text-2); font-size: 13px; margin: 18px 0 6px; }
 .crumbs code { font-family: var(--mono); }
+
+/* open-UI notice shown while sign-in is not configured */
+.banner { display: flex; align-items: baseline; gap: 12px; padding: 9px 20px; font-size: 13px;
+  background: var(--yellow-soft); color: var(--yellow); border-bottom: 1px solid var(--border); }
+.banner code { font-family: var(--mono); font-size: 12px; }
+.banner-close { margin-left: auto; background: none; border: none; color: inherit;
+  font-size: 16px; line-height: 1; cursor: pointer; padding: 0 2px; }
+
+/* login page */
+.login { display: flex; justify-content: center; padding-top: 8vh; }
+.login-card { max-width: 420px; width: 100%; padding: 28px 32px 32px; text-align: center; }
+.login-card h1 { margin-top: 0; }
+.login-card .btn.primary { justify-content: center; width: 100%; margin-top: 6px; padding: 10px 14px; }
+.login-workspaces { margin-top: 18px; }
+.notice { border-radius: var(--radius-sm); padding: 10px 12px; font-size: 13px; text-align: left; }
+.notice.fail { background: var(--red-soft); color: var(--red); }
 
 .wrap { max-width: 1080px; margin: 0 auto; padding: 8px 20px 48px; }
 h1 { font-size: 22px; margin: 14px 0 4px; }

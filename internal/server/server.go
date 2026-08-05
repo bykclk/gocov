@@ -10,8 +10,10 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/bykclk/gocov/internal/auth"
 	"github.com/bykclk/gocov/internal/blobstore"
 	"github.com/bykclk/gocov/internal/diffcov"
 	"github.com/bykclk/gocov/internal/forge"
@@ -41,6 +43,13 @@ type Config struct {
 	// (e.g. a global bot account) used for repos that have none of their
 	// own. Per-repo credentials always take precedence.
 	DefaultForgeCredentials map[string]map[string]string
+	// Auth enables web UI sign-in. Nil keeps the UI open (with a banner
+	// explaining how to enable sign-in); the upload API, badges and health
+	// checks are unaffected either way.
+	Auth auth.Provider
+	// AllowedWorkspaces overrides the derived "tracked workspaces" set
+	// that gates who may sign in. Empty means derive from the store.
+	AllowedWorkspaces []string
 }
 
 // Server is the gocov HTTP server.
@@ -53,8 +62,15 @@ type Server struct {
 	log          *slog.Logger
 	pages        map[string]*template.Template
 	mux          *http.ServeMux
+	handler      http.Handler // mux wrapped in the auth middleware
 	health       func(ctx context.Context) error
 	defaultCreds map[string]map[string]string
+
+	auth              auth.Provider
+	allowedWorkspaces []string
+	// secureCookies marks auth cookies Secure when the public base URL is
+	// https (the UI is then served through TLS or a terminating proxy).
+	secureCookies bool
 }
 
 // New builds a Server; panics only on programmer error (bad templates).
@@ -82,7 +98,7 @@ func New(cfg Config) *Server {
 	// Every page is its own template set sharing the layout and partials,
 	// so pages can define "content" without colliding.
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"index.html", "repo.html", "upload.html", "source.html"} {
+	for _, name := range []string{"index.html", "repo.html", "upload.html", "source.html", "login.html"} {
 		pages[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templatesFS,
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
@@ -98,8 +114,13 @@ func New(cfg Config) *Server {
 		mux:          http.NewServeMux(),
 		health:       cfg.Health,
 		defaultCreds: cfg.DefaultForgeCredentials,
+
+		auth:              cfg.Auth,
+		allowedWorkspaces: cfg.AllowedWorkspaces,
+		secureCookies:     strings.HasPrefix(cfg.BaseURL, "https://"),
 	}
 	s.routes()
+	s.handler = s.requireAuth(s.mux)
 	return s
 }
 
@@ -108,6 +129,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /badge/{slug...}", s.handleBadge)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.Handle("GET /static/", cacheStatic(http.FileServerFS(staticFS)))
+	s.mux.HandleFunc("GET /login", s.handleLogin)
+	s.mux.HandleFunc("GET /oauth/bitbucket/start", s.handleOAuthStart)
+	s.mux.HandleFunc("GET /oauth/bitbucket/callback", s.handleOAuthCallback)
+	s.mux.HandleFunc("POST /logout", s.handleLogout)
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
@@ -159,16 +184,19 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
+	s.handler.ServeHTTP(w, r)
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
+func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
 	t, ok := s.pages[name]
 	if !ok {
 		s.log.Error("unknown page template", "template", name)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
+	// Layout-level auth state: the open-UI banner and the nav user chip.
+	data["AuthOpen"] = s.auth == nil
+	data["CurrentUser"] = currentUser(r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
 		s.log.Error("render template", "template", name, "err", err)

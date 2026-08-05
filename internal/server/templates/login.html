@@ -1,0 +1,22 @@
+{{define "title"}}gocov — sign in{{end}}
+{{define "content"}}
+<div class="login">
+  <div class="card login-card">
+    <h1>Sign in</h1>
+    {{if .Denied}}
+    <p class="notice fail">Your Bitbucket account has no access to this instance. Sign-in is limited
+    to members of the Bitbucket workspaces tracked here; ask the operator to add you to one of
+    those workspaces (or to <code>GOCOV_ALLOWED_WORKSPACES</code>).</p>
+    {{else if .Failed}}
+    <p class="notice fail">Sign-in did not complete. Please try again.</p>
+    {{end}}
+    <p class="sub">Use the Bitbucket account that is a member of this instance&rsquo;s workspaces.
+    No separate password is needed.</p>
+    <a class="btn primary" href="/oauth/bitbucket/start?next={{.Next}}">Sign in with Bitbucket</a>
+    {{if .Workspaces}}
+    <p class="muted small login-workspaces">Tracked workspaces:
+    {{range $i, $ws := .Workspaces}}{{if $i}}, {{end}}<code>{{$ws}}</code>{{end}}</p>
+    {{end}}
+  </div>
+</div>
+{{end}}

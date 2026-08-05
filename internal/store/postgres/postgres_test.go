@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/bykclk/gocov/internal/diffcov"
 	"github.com/bykclk/gocov/internal/profile"
@@ -321,5 +322,115 @@ func TestUploadLifecycle(t *testing.T) {
 	}
 	if err := st.DeleteRepo(ctx, repo.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestUserLifecycle(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@example.com", DisplayName: "Jane Dev"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	if u.ID == 0 || u.CreatedAt.IsZero() || u.LastLoginAt.IsZero() {
+		t.Fatalf("UpsertUser did not fill ID/CreatedAt/LastLoginAt: %+v", u)
+	}
+
+	// A second login by the same forge account refreshes the same row (R1).
+	again := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@new.example", DisplayName: "Jane Renamed"}
+	if err := st.UpsertUser(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != u.ID {
+		t.Errorf("second login created a new row: %d != %d", again.ID, u.ID)
+	}
+	got, err := st.UserByID(ctx, u.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Email != "jane@new.example" || got.DisplayName != "Jane Renamed" {
+		t.Errorf("fields not refreshed: %+v", got)
+	}
+	if got.LastLoginAt.Before(u.LastLoginAt) {
+		t.Errorf("last_login_at went backwards: %v < %v", got.LastLoginAt, u.LastLoginAt)
+	}
+
+	// Same UUID under another forge must not collide (R1).
+	other := &store.User{Forge: "github", ForgeUUID: "{u1}", Email: "x@example.com", DisplayName: "X"}
+	if err := st.UpsertUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if other.ID == u.ID {
+		t.Error("uniqueness must be per forge+UUID, not per UUID")
+	}
+
+	users, err := st.ListUsers(ctx)
+	if err != nil || len(users) != 2 {
+		t.Fatalf("ListUsers = %d users, %v", len(users), err)
+	}
+
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserByID(ctx, u.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Error("user survived deletion")
+	}
+	if err := st.DeleteUser(ctx, u.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSessionLifecycle(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{s1}", Email: "s@example.com", DisplayName: "S"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+
+	sess := &store.Session{TokenHash: "hash-live", UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour)}
+	if err := st.CreateSession(ctx, sess); err != nil {
+		t.Fatal(err)
+	}
+	if sess.CreatedAt.IsZero() {
+		t.Error("CreateSession did not fill CreatedAt")
+	}
+	got, err := st.UserBySession(ctx, "hash-live")
+	if err != nil || got.ID != u.ID {
+		t.Fatalf("UserBySession = %v, %v", got, err)
+	}
+
+	// R2: a session past expiry never authenticates.
+	expired := &store.Session{TokenHash: "hash-expired", UserID: u.ID, ExpiresAt: time.Now().Add(-time.Minute)}
+	if err := st.CreateSession(ctx, expired); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserBySession(ctx, "hash-expired"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("expired session authenticated: %v", err)
+	}
+
+	// R2: logout invalidates server-side immediately.
+	if err := st.DeleteSession(ctx, "hash-live"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserBySession(ctx, "hash-live"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("deleted session still authenticates")
+	}
+	if err := st.DeleteSession(ctx, "hash-live"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("second delete = %v, want ErrNotFound", err)
+	}
+
+	// R2: deleting a user deletes their sessions.
+	sess2 := &store.Session{TokenHash: "hash-cascade", UserID: u.ID, ExpiresAt: time.Now().Add(time.Hour)}
+	if err := st.CreateSession(ctx, sess2); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UserBySession(ctx, "hash-cascade"); !errors.Is(err, store.ErrNotFound) {
+		t.Error("session survived user deletion")
 	}
 }

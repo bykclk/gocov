@@ -78,7 +78,7 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 	if unavailable == "" {
 		data["Lines"] = renderSourceLines(source, file.Blocks)
 	}
-	s.render(w, "source.html", data)
+	s.render(w, r, "source.html", data)
 }
 
 // fetchSource returns the file content at the upload's commit, preferring
@@ -106,7 +106,7 @@ func (s *Server) fetchSource(r *http.Request, repo *store.Repo, u *store.Upload,
 	// A commit's tree is immutable, so "not found" verdicts are cached
 	// too — otherwise every view of an unresolvable file would replay
 	// the whole probe sequence against the forge API, and this page
-	// needs no authentication.
+	// may be reachable without sign-in (auth is opt-in).
 	missKey := fmt.Sprintf("source-miss/%d/%s/%s", repo.ID, u.CommitSHA, repoPath)
 	notFound := fmt.Sprintf("%s was not found at commit %s on %s", repoPath, u.CommitSHA, repo.Forge)
 	if _, err := s.blobs.Get(r.Context(), missKey); err == nil {
