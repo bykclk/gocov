@@ -89,7 +89,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row)
 	}
-	s.render(w, "index.html", map[string]any{"Rows": rows, "Query": query})
+	s.render(w, r, "index.html", map[string]any{"Rows": rows, "Query": query})
 }
 
 // gateSummary renders the repo's gate rules for the stats card.
@@ -177,7 +177,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, "repo.html", map[string]any{
+	s.render(w, r, "repo.html", map[string]any{
 		"Repo":        repo,
 		"Latest":      latest,
 		"Delta":       s.branchDelta(r, repo.ID, repo.DefaultBranch),
@@ -276,7 +276,7 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 	for _, f := range files {
 		rows = append(rows, uploadFileRow{UploadFile: f, Uncovered: uncoveredRanges(f.Blocks)})
 	}
-	s.render(w, "upload.html", map[string]any{
+	s.render(w, r, "upload.html", map[string]any{
 		"Upload":         upload,
 		"Files":          rows,
 		"Repo":           repo,

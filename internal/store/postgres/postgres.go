@@ -280,6 +280,103 @@ func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	return &w, nil
 }
 
+const userCols = `id, forge, forge_uuid, email, display_name, created_at, last_login_at`
+
+func (s *Store) UpsertUser(ctx context.Context, u *store.User) error {
+	return s.pool.QueryRow(ctx, `
+		INSERT INTO users (forge, forge_uuid, email, display_name)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (forge, forge_uuid) DO UPDATE
+			SET email = EXCLUDED.email,
+				display_name = EXCLUDED.display_name,
+				last_login_at = now()
+		RETURNING id, created_at, last_login_at`,
+		u.Forge, u.ForgeUUID, u.Email, u.DisplayName,
+	).Scan(&u.ID, &u.CreatedAt, &u.LastLoginAt)
+}
+
+func (s *Store) UserByID(ctx context.Context, id int64) (*store.User, error) {
+	return s.scanUser(s.pool.QueryRow(ctx,
+		`SELECT `+userCols+` FROM users WHERE id = $1`, id))
+}
+
+func (s *Store) ListUsers(ctx context.Context) ([]*store.User, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+userCols+` FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.User
+	for rows.Next() {
+		u, err := s.scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteUser(ctx context.Context, id int64) error {
+	// Sessions go with the user via ON DELETE CASCADE.
+	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) scanUser(row rowScanner) (*store.User, error) {
+	var u store.User
+	err := row.Scan(&u.ID, &u.Forge, &u.ForgeUUID, &u.Email, &u.DisplayName,
+		&u.CreatedAt, &u.LastLoginAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, store.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (s *Store) CreateSession(ctx context.Context, sess *store.Session) error {
+	return s.pool.QueryRow(ctx, `
+		INSERT INTO sessions (token_hash, user_id, expires_at)
+		VALUES ($1, $2, $3)
+		RETURNING created_at`,
+		sess.TokenHash, sess.UserID, sess.ExpiresAt,
+	).Scan(&sess.CreatedAt)
+}
+
+func (s *Store) UserBySession(ctx context.Context, tokenHash string) (*store.User, error) {
+	// Expired sessions are simply never matched; rows are cleaned up lazily
+	// when the same token is presented again.
+	u, err := s.scanUser(s.pool.QueryRow(ctx, `
+		SELECT u.id, u.forge, u.forge_uuid, u.email, u.display_name, u.created_at, u.last_login_at
+		FROM users u JOIN sessions s ON s.user_id = u.id
+		WHERE s.token_hash = $1 AND s.expires_at > now()`,
+		tokenHash))
+	if errors.Is(err, store.ErrNotFound) {
+		_, _ = s.pool.Exec(ctx,
+			`DELETE FROM sessions WHERE token_hash = $1 AND expires_at <= now()`, tokenHash)
+	}
+	return u, err
+}
+
+func (s *Store) DeleteSession(ctx context.Context, tokenHash string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, tokenHash)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) CreateUpload(ctx context.Context, u *store.Upload, files []*store.UploadFile) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

@@ -17,10 +17,13 @@ type Store struct {
 	repoSeq    int64
 	upSeq      int64
 	wsSeq      int64
+	userSeq    int64
 	repos      map[int64]*store.Repo
 	uploads    map[int64]*store.Upload
 	files      map[int64][]*store.UploadFile // keyed by upload ID
 	workspaces map[int64]*store.Workspace
+	users      map[int64]*store.User
+	sessions   map[string]*store.Session // keyed by token hash
 }
 
 // New returns an empty in-memory store.
@@ -30,6 +33,8 @@ func New() *Store {
 		uploads:    map[int64]*store.Upload{},
 		files:      map[int64][]*store.UploadFile{},
 		workspaces: map[int64]*store.Workspace{},
+		users:      map[int64]*store.User{},
+		sessions:   map[string]*store.Session{},
 	}
 }
 
@@ -208,6 +213,109 @@ func (s *Store) ListWorkspaces(_ context.Context) ([]*store.Workspace, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out, nil
+}
+
+func (s *Store) UpsertUser(_ context.Context, u *store.User) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now()
+	for _, existing := range s.users {
+		if existing.Forge == u.Forge && existing.ForgeUUID == u.ForgeUUID {
+			existing.Email = u.Email
+			existing.DisplayName = u.DisplayName
+			existing.LastLoginAt = now
+			*u = *existing
+			return nil
+		}
+	}
+	s.userSeq++
+	u.ID = s.userSeq
+	u.CreatedAt = now
+	u.LastLoginAt = now
+	cp := *u
+	s.users[u.ID] = &cp
+	return nil
+}
+
+func (s *Store) UserByID(_ context.Context, id int64) (*store.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.users[id]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	cp := *u
+	return &cp, nil
+}
+
+func (s *Store) ListUsers(_ context.Context) ([]*store.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*store.User, 0, len(s.users))
+	for _, u := range s.users {
+		cp := *u
+		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+func (s *Store) DeleteUser(_ context.Context, id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[id]; !ok {
+		return store.ErrNotFound
+	}
+	delete(s.users, id)
+	for hash, sess := range s.sessions {
+		if sess.UserID == id {
+			delete(s.sessions, hash)
+		}
+	}
+	return nil
+}
+
+func (s *Store) CreateSession(_ context.Context, sess *store.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[sess.UserID]; !ok {
+		return fmt.Errorf("memory: session user %d does not exist", sess.UserID)
+	}
+	if sess.CreatedAt.IsZero() {
+		sess.CreatedAt = time.Now()
+	}
+	cp := *sess
+	s.sessions[sess.TokenHash] = &cp
+	return nil
+}
+
+func (s *Store) UserBySession(_ context.Context, tokenHash string) (*store.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[tokenHash]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	if !sess.ExpiresAt.After(time.Now()) {
+		delete(s.sessions, tokenHash) // lazy cleanup, matching postgres
+		return nil, store.ErrNotFound
+	}
+	u, ok := s.users[sess.UserID]
+	if !ok {
+		return nil, store.ErrNotFound
+	}
+	cp := *u
+	return &cp, nil
+}
+
+func (s *Store) DeleteSession(_ context.Context, tokenHash string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.sessions[tokenHash]; !ok {
+		return store.ErrNotFound
+	}
+	delete(s.sessions, tokenHash)
+	return nil
 }
 
 func (s *Store) CreateUpload(_ context.Context, u *store.Upload, files []*store.UploadFile) error {

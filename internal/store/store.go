@@ -88,6 +88,30 @@ type Upload struct {
 	CreatedAt  time.Time
 }
 
+// User is a web UI account, identified by the forge account it signed in
+// with. Users are provisioned just-in-time on first authorized login; no
+// passwords are ever stored.
+type User struct {
+	ID    int64
+	Forge string // "bitbucket" for now
+	// ForgeUUID is the forge's stable account identifier (survives
+	// renames). Unique per forge.
+	ForgeUUID   string
+	Email       string
+	DisplayName string
+	CreatedAt   time.Time
+	LastLoginAt time.Time
+}
+
+// Session is a server-side web UI session. Only a hash of the session
+// token is stored, never the token itself.
+type Session struct {
+	TokenHash string
+	UserID    int64
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
 // UploadFile is per-file coverage within an upload. Blocks keep the full
 // normalized block data so diff coverage can be computed later.
 type UploadFile struct {
@@ -121,6 +145,21 @@ type Store interface {
 	WorkspaceByPrefix(ctx context.Context, prefix string) (*Workspace, error)
 	WorkspaceByToken(ctx context.Context, token string) (*Workspace, error)
 	ListWorkspaces(ctx context.Context) ([]*Workspace, error)
+
+	// UpsertUser creates the user on first login or, when a row with the
+	// same forge+ForgeUUID exists, refreshes its email, display name and
+	// last-login time. ID, CreatedAt and LastLoginAt are set on u.
+	UpsertUser(ctx context.Context, u *User) error
+	UserByID(ctx context.Context, id int64) (*User, error)
+	ListUsers(ctx context.Context) ([]*User, error)
+	// DeleteUser removes the user together with all their sessions.
+	DeleteUser(ctx context.Context, id int64) error
+
+	CreateSession(ctx context.Context, sess *Session) error
+	// UserBySession resolves a session token hash to its user. Expired
+	// sessions are treated as absent (ErrNotFound).
+	UserBySession(ctx context.Context, tokenHash string) (*User, error)
+	DeleteSession(ctx context.Context, tokenHash string) error
 
 	// CreateUpload persists the upload and its per-file rows atomically,
 	// setting u.ID and u.CreatedAt.

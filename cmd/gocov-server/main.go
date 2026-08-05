@@ -8,11 +8,17 @@
 //	gocov-server repo remove -slug workspace/repo -force
 //	gocov-server workspace add -prefix workspace [flags]
 //	gocov-server workspace list|rotate-token|update|remove
+//	gocov-server user list
+//	gocov-server user remove -email someone@example.com
 //
 // Configuration via environment: DATABASE_URL (required), GOCOV_ADDR
 // (default :8080), GOCOV_BASE_URL (default http://localhost:8080), and
 // optionally GOCOV_BITBUCKET_USERNAME / GOCOV_BITBUCKET_APP_PASSWORD for
 // a global bot account used by repos without their own credentials.
+// Setting GOCOV_OAUTH_BITBUCKET_KEY / GOCOV_OAUTH_BITBUCKET_SECRET (an
+// OAuth consumer) enables — and from then on requires — Bitbucket sign-in
+// for the web UI; GOCOV_ALLOWED_WORKSPACES (comma-separated) optionally
+// overrides which workspace members may sign in.
 package main
 
 import (
@@ -23,11 +29,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/bykclk/gocov/internal/auth"
+	authbb "github.com/bykclk/gocov/internal/auth/bitbucket"
 	blobpg "github.com/bykclk/gocov/internal/blobstore/postgres"
 	"github.com/bykclk/gocov/internal/forge"
 	"github.com/bykclk/gocov/internal/forge/bitbucket"
@@ -74,8 +83,16 @@ func run(args []string) error {
 		}
 		defer st.Pool().Close()
 		return workspaceCmd(ctx, st, args[1:], os.Stdout)
+	case "user":
+		ctx := context.Background()
+		st, err := connect(ctx)
+		if err != nil {
+			return err
+		}
+		defer st.Pool().Close()
+		return userCmd(ctx, st, args[1:], os.Stdout)
 	default:
-		return fmt.Errorf("unknown command %q (want serve|repo|workspace)", args[0])
+		return fmt.Errorf("unknown command %q (want serve|repo|workspace|user)", args[0])
 	}
 }
 
@@ -119,6 +136,24 @@ func serve() error {
 		log.Warn("GOCOV_BITBUCKET_USERNAME and GOCOV_BITBUCKET_APP_PASSWORD must both be set; ignoring")
 	}
 
+	// Configuring an OAuth consumer is the switch that turns sign-in on;
+	// without one the UI stays open and shows a banner saying so.
+	var authProvider auth.Provider
+	oauthKey, oauthSecret := os.Getenv("GOCOV_OAUTH_BITBUCKET_KEY"), os.Getenv("GOCOV_OAUTH_BITBUCKET_SECRET")
+	switch {
+	case oauthKey != "" && oauthSecret != "":
+		authProvider = authbb.New(oauthKey, oauthSecret)
+		log.Info("bitbucket sign-in enabled", "callback", strings.TrimSuffix(baseURL, "/")+"/oauth/bitbucket/callback")
+	case oauthKey != "" || oauthSecret != "":
+		log.Warn("GOCOV_OAUTH_BITBUCKET_KEY and GOCOV_OAUTH_BITBUCKET_SECRET must both be set; web UI stays open")
+	}
+	var allowedWorkspaces []string
+	for _, ws := range strings.Split(os.Getenv("GOCOV_ALLOWED_WORKSPACES"), ",") {
+		if ws = strings.TrimSpace(ws); ws != "" {
+			allowedWorkspaces = append(allowedWorkspaces, ws)
+		}
+	}
+
 	srv := server.New(server.Config{
 		Store: st,
 		Blobs: blobpg.New(st.Pool()),
@@ -134,6 +169,8 @@ func serve() error {
 		Health:  st.Pool().Ping,
 
 		DefaultForgeCredentials: defaultCreds,
+		Auth:                    authProvider,
+		AllowedWorkspaces:       allowedWorkspaces,
 	})
 
 	httpSrv := &http.Server{
