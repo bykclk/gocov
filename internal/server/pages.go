@@ -162,6 +162,18 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	uploads := fetched[start:end]
 	hasOlder := len(fetched) > (page+1)*uploadsPageSize
 
+	// The trend follows the page's branch filter, defaulting to the
+	// repo's default branch when "All branches" is selected.
+	trendBranch := branch
+	if trendBranch == "" {
+		trendBranch = repo.DefaultBranch
+	}
+	trendUps, err := s.store.ListBranchUploads(r.Context(), repo.ID, trendBranch, trendUploadLimit)
+	if err != nil {
+		s.internalError(w, "listing uploads for trend", err)
+		return
+	}
+
 	var latest *store.Upload
 	if l, err := s.store.LatestUpload(r.Context(), repo.ID, repo.DefaultBranch); err == nil {
 		latest = l
@@ -185,6 +197,7 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		"GateSummary": gateSummary(repo.Gate),
 		"Branches":    branches,
 		"Branch":      branch,
+		"Trend":       newTrendView(trendBranch, trendUps),
 		"Uploads":     uploads,
 		"Page":        page,
 		"PrevPage":    page - 1,

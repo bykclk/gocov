@@ -109,6 +109,19 @@ td:first-child { min-width: 220px; }
 .fill.good { background: var(--green); } .fill.warn { background: var(--yellow); } .fill.bad { background: var(--red); }
 .pct.good { color: var(--green); } .pct.warn { color: var(--yellow); } .pct.bad { color: var(--red); }
 
+/* trend chart */
+.trend-card { margin-bottom: 14px; padding: 8px 6px 2px; }
+.trend { display: block; width: 100%; height: auto; }
+.trend .line { fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round; }
+.trend .grid { stroke: var(--border-soft); stroke-dasharray: 3 4; }
+.trend .pt { fill: var(--accent); }
+.trend .pt.fail { fill: var(--red); }
+.trend a:hover .pt { stroke: var(--accent-strong); stroke-width: 3; }
+.trend a:hover .pt.fail { stroke: var(--red); }
+.trend .lbl { fill: var(--text-2); font-size: 11px; font-variant-numeric: tabular-nums; }
+.trend .cur { fill: var(--text); font-weight: 600; font-size: 12px; }
+
 /* chips */
 .chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px;
   font-size: 12px; font-weight: 600; padding: 2px 10px; line-height: 18px; }
