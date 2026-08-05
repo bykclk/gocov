@@ -63,10 +63,11 @@ type Report struct {
 	Data    []ReportData
 }
 
-// Annotation is one finding of a Report, anchored to a source line.
+// Annotation is one finding of a Report, anchored to a source line or,
+// when Line is 0, to the file as a whole.
 type Annotation struct {
 	Path    string // repo-relative file path, as it appears in the PR diff
-	Line    int    // 1-based line in the new file version
+	Line    int    // 1-based line in the new file version; 0 = file-level
 	Summary string
 }
 

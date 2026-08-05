@@ -373,14 +373,17 @@ func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, 
 	for i, a := range annotations {
 		// An untested line is a smell, not an incident: CODE_SMELL at
 		// MEDIUM, never the vulnerability/critical tier.
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"external_id":     fmt.Sprintf("gocov-%03d", i+1),
 			"annotation_type": "CODE_SMELL",
 			"severity":        "MEDIUM",
 			"path":            a.Path,
-			"line":            a.Line,
 			"summary":         a.Summary,
-		})
+		}
+		if a.Line > 0 {
+			item["line"] = a.Line
+		}
+		items = append(items, item)
 	}
 	return c.send(ctx, http.MethodPost, base+"/annotations", items)
 }

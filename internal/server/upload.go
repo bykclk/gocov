@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/bykclk/gocov/internal/diffcov"
@@ -622,6 +623,9 @@ func (s *Server) insightsReport(u *store.Upload, deltaPct *float64, gate gateRes
 			result = forge.ReportPassed
 		}
 	}
+	if dc := u.DiffCoverage; dc != nil {
+		data = appendPerFileData(data, dc)
+	}
 
 	return forge.Report{
 		Title:   "gocov coverage",
@@ -632,11 +636,71 @@ func (s *Server) insightsReport(u *store.Upload, deltaPct *float64, gate gateRes
 	}, annotations
 }
 
+// insightsMaxDataFields is the forge API's cap on report data fields.
+const insightsMaxDataFields = 10
+
+// appendPerFileData fills the remaining data-field budget with a per-file
+// summary of the worst-covered changed files, lowest diff coverage first.
+// Fully covered files say nothing a reviewer needs, so they never claim
+// a field.
+func appendPerFileData(data []forge.ReportData, dc *diffcov.Result) []forge.ReportData {
+	var files []diffcov.FileCoverage
+	for _, f := range dc.Files {
+		if len(f.UncoveredLines) > 0 {
+			files = append(files, f)
+		}
+	}
+	sort.Slice(files, func(i, j int) bool {
+		pi := float64(files[i].CoveredLines) * float64(files[j].TotalLines)
+		pj := float64(files[j].CoveredLines) * float64(files[i].TotalLines)
+		if pi != pj {
+			return pi < pj
+		}
+		return files[i].Path < files[j].Path
+	})
+	for _, f := range files {
+		if len(data) >= insightsMaxDataFields {
+			break
+		}
+		data = append(data, forge.ReportData{
+			Title: dataFieldPath(f.Path),
+			Type:  forge.DataPercentage,
+			Value: 100 * float64(f.CoveredLines) / float64(f.TotalLines),
+		})
+	}
+	return data
+}
+
+// dataFieldPath keeps report data titles readable for deep paths: long
+// ones keep their tail, which carries the file name.
+func dataFieldPath(p string) string {
+	const max = 60
+	r := []rune(p)
+	if len(r) <= max {
+		return p
+	}
+	return "…" + string(r[len(r)-max+1:])
+}
+
 // insightsAnnotations turns the diff-coverage result into one annotation
 // per contiguous uncovered range, anchored at the range start and ordered
 // by file path (dc.Files is path-sorted). Ranges beyond the cap are
 // counted, not annotated.
 func insightsAnnotations(dc *diffcov.Result) (anns []forge.Annotation, dropped int) {
+	// Whole-file findings first — a changed source file with no coverage
+	// data at all. File-level (no line), so the forge pins them to the
+	// file header in the diff. They are few and salient, which is why
+	// they get the budget before line ranges.
+	for _, p := range dc.UnmatchedFiles {
+		if len(anns) == insightsMaxAnnotations {
+			dropped++
+			continue
+		}
+		anns = append(anns, forge.Annotation{
+			Path:    p,
+			Summary: "This changed file has no coverage data — nothing in it appears to be tested",
+		})
+	}
 	for _, f := range dc.Files {
 		lines := f.UncoveredLines
 		for i := 0; i < len(lines); {

@@ -43,9 +43,11 @@ format is detected from the uploaded content.
   coverage, gate verdict) that Bitbucket shows in the pull request's
   Reports panel, and PR uploads annotate uncovered changed lines right
   in the diff view — reviewers see untested code exactly where they are
-  reviewing it, with no plugin on the Bitbucket side. Re-uploads replace
-  the report and annotations in place; no coverage product on Bitbucket
-  Cloud ships this today
+  reviewing it, with no plugin on the Bitbucket side. Changed files with
+  no coverage data at all get a file-level marker, and the report card
+  lists the worst-covered changed files while the field budget allows.
+  Re-uploads replace the report and annotations in place; no coverage
+  product on Bitbucket Cloud ships this today
 
   _[screenshot: coverage report card and inline annotations in a
   Bitbucket PR]_

@@ -72,14 +72,18 @@ func TestCodeInsightsPRUpload(t *testing.T) {
 	}
 
 	// Data fields in PRD order: total, diff pct, uncovered count,
-	// statements, gate (no delta on a first upload).
+	// statements, gate (no delta on a first upload), then the per-file
+	// summary filling the remaining budget.
 	titles := make([]string, len(r.Data))
 	for i, d := range r.Data {
 		titles[i] = d.Title
 	}
-	want := []string{"Total coverage", "Diff coverage", "Uncovered changed lines", "Statements", "Gate"}
+	want := []string{"Total coverage", "Diff coverage", "Uncovered changed lines", "Statements", "Gate", "m/a.go"}
 	if strings.Join(titles, ",") != strings.Join(want, ",") {
 		t.Fatalf("data fields = %v, want %v", titles, want)
+	}
+	if r.Data[5].Type != forge.DataPercentage {
+		t.Errorf("per-file field = %+v", r.Data[5])
 	}
 	if r.Data[0].Type != forge.DataPercentage || r.Data[0].Value != 80.0 {
 		t.Errorf("total coverage field = %+v", r.Data[0])
@@ -94,14 +98,19 @@ func TestCodeInsightsPRUpload(t *testing.T) {
 		t.Errorf("statements/gate = %v / %v", r.Data[3].Value, r.Data[4].Value)
 	}
 
-	// One annotation: a.go line 9 is the only uncovered changed line.
-	if len(call.Annotations) != 1 {
-		t.Fatalf("annotations = %+v, want exactly 1", call.Annotations)
+	// Two annotations: the whole-file finding for untested.go (file
+	// level, no line) comes first, then a.go line 9 — the only
+	// uncovered changed line with coverage data.
+	if len(call.Annotations) != 2 {
+		t.Fatalf("annotations = %+v, want exactly 2", call.Annotations)
 	}
-	a := call.Annotations[0]
-	if a.Path != "m/a.go" || a.Line != 9 ||
+	if a := call.Annotations[0]; a.Path != "m/untested.go" || a.Line != 0 ||
+		!strings.Contains(a.Summary, "no coverage data") {
+		t.Errorf("file-level annotation = %+v", a)
+	}
+	if a := call.Annotations[1]; a.Path != "m/a.go" || a.Line != 9 ||
 		a.Summary != "Line 9 of this change is not covered by tests" {
-		t.Errorf("annotation = %+v", a)
+		t.Errorf("line annotation = %+v", a)
 	}
 
 	// Re-upload for the same commit publishes again under the same
@@ -216,15 +225,19 @@ func TestCodeInsightsFailureIsolation(t *testing.T) {
 }
 
 func TestInsightsAnnotationsCollapseRanges(t *testing.T) {
-	dc := &diffcov.Result{Files: []diffcov.FileCoverage{
-		{Path: "a.go", UncoveredLines: []int{5, 6, 7, 10}},
-		{Path: "b.go", UncoveredLines: []int{1}},
-	}}
+	dc := &diffcov.Result{
+		Files: []diffcov.FileCoverage{
+			{Path: "a.go", UncoveredLines: []int{5, 6, 7, 10}},
+			{Path: "b.go", UncoveredLines: []int{1}},
+		},
+		UnmatchedFiles: []string{"c.go"},
+	}
 	anns, dropped := insightsAnnotations(dc)
 	if dropped != 0 {
 		t.Fatalf("dropped = %d", dropped)
 	}
 	want := []forge.Annotation{
+		{Path: "c.go", Summary: "This changed file has no coverage data — nothing in it appears to be tested"},
 		{Path: "a.go", Line: 5, Summary: "Lines 5–7 of this change are not covered by tests"},
 		{Path: "a.go", Line: 10, Summary: "Line 10 of this change is not covered by tests"},
 		{Path: "b.go", Line: 1, Summary: "Line 1 of this change is not covered by tests"},
@@ -262,5 +275,61 @@ func TestInsightsAnnotationsTruncate(t *testing.T) {
 	}, nil, gateResult{})
 	if !strings.Contains(report.Details, "+5 more uncovered ranges") {
 		t.Errorf("details = %q, want truncation note", report.Details)
+	}
+}
+
+func TestInsightsPerFileDataBudget(t *testing.T) {
+	// Eight partially covered files against six standard fields (delta
+	// and gate present): the per-file summary must stop at the API's
+	// ten-field cap, worst-covered file first.
+	files := make([]diffcov.FileCoverage, 8)
+	for i := range files {
+		files[i] = diffcov.FileCoverage{
+			Path:           string(rune('a'+i)) + ".go",
+			CoveredLines:   int64(i), // i of 10 covered: a.go worst
+			TotalLines:     10,
+			UncoveredLines: []int{1}, // marker: has uncovered lines
+		}
+	}
+	dc := &diffcov.Result{Files: files, CoveredLines: 28, TotalLines: 80}
+
+	f := newFixture(t, nil)
+	delta := 1.5
+	report, _ := f.srv.insightsReport(&store.Upload{
+		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, DiffCoverage: dc,
+	}, &delta, gateResult{configured: true})
+
+	if len(report.Data) != insightsMaxDataFields {
+		t.Fatalf("data fields = %d, want %d", len(report.Data), insightsMaxDataFields)
+	}
+	// Six standard fields, then the four worst files a.go .. d.go.
+	for i, wantTitle := range []string{"a.go", "b.go", "c.go", "d.go"} {
+		d := report.Data[6+i]
+		if d.Title != wantTitle || d.Type != forge.DataPercentage || d.Value != float64(i*10) {
+			t.Errorf("per-file field[%d] = %+v, want %s at %d%%", i, d, wantTitle, i*10)
+		}
+	}
+}
+
+func TestInsightsFullyCoveredFilesClaimNoDataFields(t *testing.T) {
+	dc := &diffcov.Result{
+		Files: []diffcov.FileCoverage{
+			{Path: "ok.go", CoveredLines: 5, TotalLines: 5},
+			{Path: "bad.go", CoveredLines: 0, TotalLines: 2, UncoveredLines: []int{3, 4}},
+		},
+		CoveredLines: 5, TotalLines: 7,
+	}
+	f := newFixture(t, nil)
+	report, _ := f.srv.insightsReport(&store.Upload{
+		TotalPct: 80, CoveredStmts: 8, TotalStmts: 10, DiffCoverage: dc,
+	}, nil, gateResult{})
+	for _, d := range report.Data {
+		if d.Title == "ok.go" {
+			t.Errorf("fully covered file claimed a data field: %+v", d)
+		}
+	}
+	last := report.Data[len(report.Data)-1]
+	if last.Title != "bad.go" || last.Value != 0.0 {
+		t.Errorf("per-file field = %+v, want bad.go at 0%%", last)
 	}
 }

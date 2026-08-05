@@ -301,7 +301,7 @@ func TestPublishReport(t *testing.T) {
 	}
 	annotations := []forge.Annotation{
 		{Path: "m/a.go", Line: 9, Summary: "Line 9 of this change is not covered by tests"},
-		{Path: "m/b.go", Line: 4, Summary: "Lines 4–6 of this change are not covered by tests"},
+		{Path: "m/b.go", Summary: "This changed file has no coverage data — nothing in it appears to be tested"},
 	}
 	if err := c.PublishReport(context.Background(), "acme/widgets", "abc123", report, annotations); err != nil {
 		t.Fatal(err)
@@ -360,6 +360,10 @@ func TestPublishReport(t *testing.T) {
 	}
 	if annBody[1]["external_id"] != "gocov-002" {
 		t.Errorf("annotation[1] external_id = %v", annBody[1]["external_id"])
+	}
+	// File-level annotation: the line key must be absent, not zero.
+	if _, hasLine := annBody[1]["line"]; hasLine {
+		t.Errorf("file-level annotation carries a line: %v", annBody[1])
 	}
 }
 
