@@ -66,8 +66,11 @@ type Report struct {
 // Annotation is one finding of a Report, anchored to a source line or,
 // when Line is 0, to the file as a whole.
 type Annotation struct {
-	Path    string // repo-relative file path, as it appears in the PR diff
-	Line    int    // 1-based line in the new file version; 0 = file-level
+	Path string // repo-relative file path, as it appears in the PR diff
+	Line int    // 1-based line in the new file version; 0 = file-level
+	// EndLine closes the range a finding spans; 0 or Line for a single
+	// line. Forges without range support anchor at Line and ignore it.
+	EndLine int
 	Summary string
 }
 

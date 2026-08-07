@@ -571,7 +571,14 @@ func (s *Server) pushCodeInsights(ctx context.Context, fg forge.Forge, fgErr err
 	report, annotations := s.insightsReport(u, deltaPct, gate)
 	err := fg.PublishReport(ctx, repo.Slug, u.CommitSHA, report, annotations)
 	if errors.Is(err, forge.ErrNotImplemented) {
-		return "skipped"
+		// A wrapped sentinel carries the forge's reason (e.g. GitHub
+		// check runs being closed to the credential type) — worth
+		// surfacing, unlike the bare "this forge has no such surface".
+		if err == forge.ErrNotImplemented {
+			return "skipped"
+		}
+		s.log.Info("code insights unavailable", "repo", repo.Slug, "reason", err)
+		return "skipped: " + err.Error()
 	}
 	if err != nil {
 		s.log.Warn("publish code insights report", "repo", repo.Slug, "commit", u.CommitSHA, "err", err)
@@ -715,7 +722,7 @@ func insightsAnnotations(dc *diffcov.Result) (anns []forge.Annotation, dropped i
 				if j > i {
 					summary = fmt.Sprintf("Lines %d–%d of this change are not covered by tests", lines[i], lines[j])
 				}
-				anns = append(anns, forge.Annotation{Path: f.Path, Line: lines[i], Summary: summary})
+				anns = append(anns, forge.Annotation{Path: f.Path, Line: lines[i], EndLine: lines[j], Summary: summary})
 			}
 			i = j + 1
 		}
