@@ -207,6 +207,38 @@ func repoAdd(ctx context.Context, st store.Store, args []string, out io.Writer) 
 		return fmt.Errorf("creating repo: %w", err)
 	}
 	fmt.Fprintf(out, "repo %s added\nupload token: %s\n", r.Slug, r.Token)
+	if prefix, _, ok := strings.Cut(*slug, "/"); ok {
+		if err := ensureWorkspace(ctx, st, prefix, *forgeName, *defaultBranch, out); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureWorkspace creates the workspace row for a slug prefix when none
+// exists yet (M2/D6: every repo belongs to a workspace). It is idempotent —
+// an existing prefix is left untouched — and prints the generated token so
+// the operator can wire up prefix-wide auto-registration.
+func ensureWorkspace(ctx context.Context, st store.Store, prefix, forge, defaultBranch string, out io.Writer) error {
+	if _, err := st.WorkspaceByPrefix(ctx, prefix); err == nil {
+		return nil
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("looking up workspace: %w", err)
+	}
+	token, err := newToken()
+	if err != nil {
+		return err
+	}
+	w := &store.Workspace{
+		Forge:         forge,
+		Prefix:        prefix,
+		Token:         token,
+		DefaultBranch: defaultBranch,
+	}
+	if err := st.CreateWorkspace(ctx, w); err != nil {
+		return fmt.Errorf("creating workspace: %w", err)
+	}
+	fmt.Fprintf(out, "workspace %s created\nworkspace upload token: %s\n", w.Prefix, w.Token)
 	return nil
 }
 

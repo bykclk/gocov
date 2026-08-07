@@ -259,6 +259,10 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "provisioning user", err)
 		return
 	}
+	if err := s.syncMemberships(r.Context(), u, id.Workspaces); err != nil {
+		s.internalError(w, "syncing workspace memberships", err)
+		return
+	}
 	token, err := newState() // same entropy requirement: 256 random bits
 	if err != nil {
 		s.internalError(w, "generating session token", err)
@@ -332,6 +336,30 @@ func (s *Server) allowedWorkspaceSet(r *http.Request) (map[string]bool, error) {
 		}
 	}
 	return set, nil
+}
+
+// syncMemberships persists the user's workspace memberships (M2/D2): the
+// tracked workspaces on this forge whose prefix the forge reports the user
+// belongs to. It runs on every sign-in with full-sync semantics, so a
+// membership the forge no longer reports is dropped at the next login.
+// Matching is per provider (forge + prefix), so two forges sharing a prefix
+// stay distinct tenants.
+func (s *Server) syncMemberships(ctx context.Context, u *store.User, forgeWorkspaces []string) error {
+	forgeSet := make(map[string]bool, len(forgeWorkspaces))
+	for _, ws := range forgeWorkspaces {
+		forgeSet[ws] = true
+	}
+	tracked, err := s.store.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for _, ws := range tracked {
+		if ws.Forge == u.Forge && forgeSet[ws.Prefix] {
+			ids = append(ids, ws.ID)
+		}
+	}
+	return s.store.SetUserWorkspaces(ctx, u.ID, ids)
 }
 
 // trackedWorkspaces renders the allowed set for the login page, so it is

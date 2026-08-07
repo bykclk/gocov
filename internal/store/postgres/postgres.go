@@ -280,6 +280,55 @@ func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	return &w, nil
 }
 
+func (s *Store) SetUserWorkspaces(ctx context.Context, userID int64, workspaceIDs []int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+
+	// Drop memberships the forge no longer reports. An empty set matches
+	// every row (<> ALL of nothing is true), clearing the user entirely.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM workspace_members WHERE user_id = $1 AND workspace_id <> ALL($2)`,
+		userID, workspaceIDs); err != nil {
+		return err
+	}
+	// Add the current set; rows that already exist stay untouched.
+	for _, wsID := range workspaceIDs {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2)
+				ON CONFLICT DO NOTHING`,
+			wsID, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*store.Workspace, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT w.id, w.forge, w.prefix, w.token, w.default_branch,
+			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop, w.created_at
+		FROM workspaces w
+		JOIN workspace_members m ON m.workspace_id = w.id
+		WHERE m.user_id = $1
+		ORDER BY w.prefix`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*store.Workspace
+	for rows.Next() {
+		w, err := s.scanWorkspace(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 const userCols = `id, forge, forge_uuid, email, display_name, created_at, last_login_at`
 
 func (s *Store) UpsertUser(ctx context.Context, u *store.User) error {
