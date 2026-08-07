@@ -434,3 +434,94 @@ func TestSessionLifecycle(t *testing.T) {
 		t.Error("session survived user deletion")
 	}
 }
+
+func TestWorkspaceMembership(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{m1}", DisplayName: "Member"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+	acme := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "tok-acme"}
+	beta := &store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "tok-beta"}
+	for _, w := range []*store.Workspace{acme, beta} {
+		if err := st.CreateWorkspace(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	prefixes := func() []string {
+		t.Helper()
+		wss, err := st.ListWorkspacesForUser(ctx, u.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, len(wss))
+		for i, w := range wss {
+			out[i] = w.Prefix
+		}
+		return out
+	}
+	memberRows := func() int {
+		t.Helper()
+		var n int
+		if err := st.Pool().QueryRow(ctx,
+			`SELECT count(*) FROM workspace_members WHERE user_id = $1`, u.ID).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+
+	// Initial sync attaches both, ordered by prefix.
+	if err := st.SetUserWorkspaces(ctx, u.ID, []int64{beta.ID, acme.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if got := prefixes(); !reflect.DeepEqual(got, []string{"acme", "beta"}) {
+		t.Fatalf("after sync: %v, want [acme beta]", got)
+	}
+
+	// Re-running with the same set is idempotent (no duplicate rows).
+	if err := st.SetUserWorkspaces(ctx, u.ID, []int64{acme.ID, beta.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if n := memberRows(); n != 2 {
+		t.Fatalf("idempotent re-sync produced %d rows, want 2", n)
+	}
+
+	// Dropping beta on the forge removes only that membership.
+	if err := st.SetUserWorkspaces(ctx, u.ID, []int64{acme.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if got := prefixes(); !reflect.DeepEqual(got, []string{"acme"}) {
+		t.Fatalf("after drop: %v, want [acme]", got)
+	}
+
+	// Deleting the workspace cascades the membership away.
+	if err := st.DeleteWorkspace(ctx, acme.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := prefixes(); len(got) != 0 {
+		t.Fatalf("membership survived workspace deletion: %v", got)
+	}
+
+	// Re-attach, then delete the user: memberships cascade on that side too.
+	if err := st.SetUserWorkspaces(ctx, u.ID, []int64{beta.ID}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteUser(ctx, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := memberRows(); n != 0 {
+		t.Fatalf("membership survived user deletion: %d rows", n)
+	}
+
+	// An empty sync clears everything and is safe on a user with no rows.
+	other := &store.User{Forge: "bitbucket", ForgeUUID: "{m2}", DisplayName: "Other"}
+	if err := st.UpsertUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetUserWorkspaces(ctx, other.ID, nil); err != nil {
+		t.Fatalf("empty sync on fresh user: %v", err)
+	}
+}

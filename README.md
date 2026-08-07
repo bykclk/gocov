@@ -200,6 +200,17 @@ again (and is re-provisioned) as long as they are still a workspace
 member. Sessions last 30 days; membership is re-checked at each login,
 not per request.
 
+Access mirrors your forge workspace membership. Once sign-in is
+configured, each account sees only the repos in the workspaces and orgs
+the forge says it belongs to — the repo list is filtered, and a direct
+link to another workspace's repo, upload or source page returns 404.
+Memberships are synced from the forge on every sign-in, so there is no
+separate invite or member-management step: add someone to the workspace
+on Bitbucket or GitHub and they see its coverage at their next login;
+remove them and it disappears. A single-team self-host where everyone
+belongs to the same workspace is unaffected, as is an instance with
+sign-in left open — both stay exactly as before.
+
 ### Coverage gate
 
 ```sh
