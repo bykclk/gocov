@@ -3,8 +3,8 @@
 //	gocov upload [flags] coverage.out
 //
 // Repo, commit, branch and PR id are auto-detected from Bitbucket Pipelines
-// environment variables, falling back to git. Server and token come from
-// GOCOV_SERVER / GOCOV_TOKEN or flags.
+// or GitHub Actions environment variables, falling back to git. Server and
+// token come from GOCOV_SERVER / GOCOV_TOKEN or flags.
 package main
 
 import (
@@ -60,7 +60,7 @@ func run(args []string) error {
 		return fmt.Errorf("upload token required: set -token or $GOCOV_TOKEN")
 	}
 
-	build := detectBuild(osEnv, runGit)
+	build := detectBuild(osEnv, runGit, os.ReadFile)
 	build.merge(buildInfo{Repo: *repo, Commit: *commit, Branch: *branch, PRID: *pr})
 	if build.Commit == "" {
 		return fmt.Errorf("could not detect commit SHA: pass -commit")
