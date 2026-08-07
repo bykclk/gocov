@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bykclk/gocov/internal/auth"
 	"github.com/bykclk/gocov/internal/store"
 )
 
@@ -54,12 +55,16 @@ func publicPath(p string) bool {
 		strings.HasPrefix(p, "/oauth/")
 }
 
+// authEnabled reports whether at least one sign-in provider is
+// configured — the switch between the open UI and enforced sign-in.
+func (s *Server) authEnabled() bool { return len(s.auths) > 0 }
+
 // requireAuth is the enforcement middleware. With no provider configured
 // the UI stays open exactly as before (the layout shows a banner instead);
 // with one configured, every non-public path needs a valid session.
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.auth == nil || publicPath(r.URL.Path) {
+		if !s.authEnabled() || publicPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -98,10 +103,30 @@ func redirectToLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/login?next="+url.QueryEscape(next), http.StatusFound)
 }
 
-// handleLogin implements GET /login — the "Sign in with Bitbucket" page,
-// doubling as the generic-failure and access-denied page.
+// loginProvider is one sign-in button on the login page.
+type loginProvider struct {
+	Name  string // forge name, the URL segment of the login routes
+	Label string // human-readable button label
+}
+
+// providerLabels maps forge names to their proper spelling; unknown
+// forges fall back to their capitalized name.
+var providerLabels = map[string]string{
+	"bitbucket": "Bitbucket",
+	"github":    "GitHub",
+}
+
+func providerLabel(name string) string {
+	if l, ok := providerLabels[name]; ok {
+		return l
+	}
+	return strings.ToUpper(name[:1]) + name[1:]
+}
+
+// handleLogin implements GET /login — the sign-in page with one button
+// per provider, doubling as the generic-failure and access-denied page.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	if s.auth == nil {
+	if !s.authEnabled() {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -121,19 +146,39 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if denied {
 		workspaces = s.trackedWorkspaces(r)
 	}
+	providers := make([]loginProvider, 0, len(s.authOrder))
+	for _, p := range s.authOrder {
+		providers = append(providers, loginProvider{Name: p.Name(), Label: providerLabel(p.Name())})
+	}
 	s.render(w, r, "login.html", map[string]any{
 		"Failed":     r.FormValue("error") == "1",
 		"Denied":     denied,
 		"Next":       sanitizeNext(r.FormValue("next")),
 		"Workspaces": workspaces,
+		"Providers":  providers,
 	})
 }
 
-// handleOAuthStart implements GET /oauth/bitbucket/start: it binds a fresh
+// oauthProvider resolves the {forge} path segment of the login routes,
+// writing the error response itself when there is no such provider.
+func (s *Server) oauthProvider(w http.ResponseWriter, r *http.Request) auth.Provider {
+	if !s.authEnabled() {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return nil
+	}
+	p, ok := s.auths[r.PathValue("forge")]
+	if !ok {
+		http.NotFound(w, r)
+		return nil
+	}
+	return p
+}
+
+// handleOAuthStart implements GET /oauth/{forge}/start: it binds a fresh
 // state to a short-lived cookie and forwards to the consent screen.
 func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
-	if s.auth == nil {
-		http.Redirect(w, r, "/", http.StatusFound)
+	provider := s.oauthProvider(w, r)
+	if provider == nil {
 		return
 	}
 	state, err := newState()
@@ -150,16 +195,16 @@ func (s *Server) handleOAuthStart(w http.ResponseWriter, r *http.Request) {
 		Secure:   s.secureCookies,
 		SameSite: http.SameSiteLaxMode,
 	})
-	http.Redirect(w, r, s.auth.AuthorizeURL(state, s.redirectURI()), http.StatusFound)
+	http.Redirect(w, r, provider.AuthorizeURL(state, s.redirectURI(provider.Name())), http.StatusFound)
 }
 
-// handleOAuthCallback implements GET /oauth/bitbucket/callback per D4: it
+// handleOAuthCallback implements GET /oauth/{forge}/callback per D4: it
 // verifies the state, exchanges the code for an identity, applies the
 // workspace-membership rule and only then provisions the user and session.
-// The provider discards the Bitbucket tokens; nothing forge-side is stored.
+// The provider discards the forge tokens; nothing forge-side is stored.
 func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	if s.auth == nil {
-		http.Redirect(w, r, "/", http.StatusFound)
+	provider := s.oauthProvider(w, r)
+	if provider == nil {
 		return
 	}
 	failed := func() { http.Redirect(w, r, "/login?error=1", http.StatusFound) }
@@ -168,15 +213,15 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	clearCookie(w, stateCookie, s.secureCookies)
 	code := r.FormValue("code")
 	if r.FormValue("error") != "" || code == "" || state == "" || r.FormValue("state") != state {
-		s.log.Warn("oauth callback rejected", "forge", s.auth.Name(),
+		s.log.Warn("oauth callback rejected", "forge", provider.Name(),
 			"forge_error", r.FormValue("error"), "state_ok", r.FormValue("state") == state && state != "")
 		failed()
 		return
 	}
 
-	id, err := s.auth.Identity(r.Context(), code, s.redirectURI())
+	id, err := provider.Identity(r.Context(), code, s.redirectURI(provider.Name()))
 	if err != nil {
-		s.log.Error("oauth identity", "forge", s.auth.Name(), "err", err)
+		s.log.Error("oauth identity", "forge", provider.Name(), "err", err)
 		failed()
 		return
 	}
@@ -198,14 +243,14 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		// Both sides of the failed intersection are logged so an operator
 		// can see at a glance whether the fix is a missing registration,
 		// a stale GOCOV_ALLOWED_WORKSPACES or a slug mismatch.
-		s.log.Warn("sign-in denied", "forge", s.auth.Name(), "account", id.DisplayName, "email", id.Email,
+		s.log.Warn("sign-in denied", "forge", provider.Name(), "account", id.DisplayName, "email", id.Email,
 			"member_of", id.Workspaces, "allowed", sortedKeys(allowed))
 		http.Redirect(w, r, "/login?denied=1", http.StatusFound)
 		return
 	}
 
 	u := &store.User{
-		Forge:       s.auth.Name(),
+		Forge:       provider.Name(),
 		ForgeUUID:   id.ForgeUUID,
 		Email:       id.Email,
 		DisplayName: id.DisplayName,
@@ -237,7 +282,7 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		Secure:   s.secureCookies,
 		SameSite: http.SameSiteLaxMode,
 	})
-	s.log.Info("sign-in", "forge", s.auth.Name(), "user", u.DisplayName, "email", u.Email)
+	s.log.Info("sign-in", "forge", provider.Name(), "user", u.DisplayName, "email", u.Email)
 	http.Redirect(w, r, next, http.StatusFound)
 }
 
@@ -251,7 +296,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	clearCookie(w, sessionCookie, s.secureCookies)
-	if s.auth == nil {
+	if !s.authEnabled() {
 		http.Redirect(w, r, "/", http.StatusFound)
 		return
 	}
@@ -308,8 +353,8 @@ func sortedKeys(set map[string]bool) []string {
 	return out
 }
 
-func (s *Server) redirectURI() string {
-	return strings.TrimSuffix(s.baseURL, "/") + "/oauth/bitbucket/callback"
+func (s *Server) redirectURI(forge string) string {
+	return strings.TrimSuffix(s.baseURL, "/") + "/oauth/" + forge + "/callback"
 }
 
 // sanitizeNext confines the post-login redirect to in-site paths, so the
