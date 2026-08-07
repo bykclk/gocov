@@ -13,8 +13,9 @@
 //
 // Configuration via environment: DATABASE_URL (required), GOCOV_ADDR
 // (default :8080), GOCOV_BASE_URL (default http://localhost:8080), and
-// optionally GOCOV_BITBUCKET_USERNAME / GOCOV_BITBUCKET_APP_PASSWORD for
-// a global bot account used by repos without their own credentials.
+// optionally GOCOV_BITBUCKET_USERNAME / GOCOV_BITBUCKET_APP_PASSWORD
+// and/or GOCOV_GITHUB_TOKEN for global bot credentials used by repos
+// without their own.
 // Setting GOCOV_OAUTH_BITBUCKET_KEY / GOCOV_OAUTH_BITBUCKET_SECRET (an
 // OAuth consumer) enables — and from then on requires — Bitbucket sign-in
 // for the web UI; GOCOV_ALLOWED_WORKSPACES (comma-separated) optionally
@@ -40,6 +41,7 @@ import (
 	blobpg "github.com/bykclk/gocov/internal/blobstore/postgres"
 	"github.com/bykclk/gocov/internal/forge"
 	"github.com/bykclk/gocov/internal/forge/bitbucket"
+	"github.com/bykclk/gocov/internal/forge/github"
 	"github.com/bykclk/gocov/internal/profile"
 	"github.com/bykclk/gocov/internal/server"
 	storepg "github.com/bykclk/gocov/internal/store/postgres"
@@ -135,6 +137,10 @@ func serve() error {
 	case bbUser != "" || bbPassword != "":
 		log.Warn("GOCOV_BITBUCKET_USERNAME and GOCOV_BITBUCKET_APP_PASSWORD must both be set; ignoring")
 	}
+	if ghToken := os.Getenv("GOCOV_GITHUB_TOKEN"); ghToken != "" {
+		defaultCreds["github"] = map[string]string{"token": ghToken}
+		log.Info("global github credentials configured")
+	}
 
 	// Configuring an OAuth consumer is the switch that turns sign-in on;
 	// without one the UI stays open and shows a banner saying so.
@@ -163,7 +169,10 @@ func serve() error {
 			"jacoco":    profile.JaCoCoParser{},
 			"cobertura": profile.CoberturaParser{},
 		},
-		Forges:  map[string]forge.Factory{"bitbucket": bitbucket.Factory},
+		Forges: map[string]forge.Factory{
+			"bitbucket": bitbucket.Factory,
+			"github":    github.Factory,
+		},
 		BaseURL: baseURL,
 		Logger:  log,
 		Health:  st.Pool().Ping,

@@ -58,6 +58,22 @@ func TestRepoAdd(t *testing.T) {
 	}
 }
 
+func TestRepoAddGitHub(t *testing.T) {
+	st := storemem.New()
+	token := mustAdd(t, st, "-slug", "acme/widgets", "-forge", "github", "-gh-token", "ghp_x")
+
+	r, err := st.RepoByToken(context.Background(), token)
+	if err != nil {
+		t.Fatalf("token not resolvable: %v", err)
+	}
+	if r.Forge != "github" {
+		t.Errorf("forge = %q", r.Forge)
+	}
+	if r.ForgeCredentials["token"] != "ghp_x" {
+		t.Errorf("credentials = %v", r.ForgeCredentials)
+	}
+}
+
 func TestRepoAddValidation(t *testing.T) {
 	st := storemem.New()
 	tests := []struct {
@@ -66,6 +82,8 @@ func TestRepoAddValidation(t *testing.T) {
 	}{
 		{"missing slug", []string{"add"}},
 		{"username without password", []string{"add", "-slug", "a/b", "-bb-username", "u"}},
+		{"github token mixed with bitbucket pair", []string{"add", "-slug", "a/b",
+			"-gh-token", "t", "-bb-username", "u", "-bb-app-password", "p"}},
 		{"unknown flag", []string{"add", "-slug", "a/b", "-nope"}},
 	}
 	for _, tt := range tests {
@@ -215,6 +233,18 @@ func TestRepoUpdate(t *testing.T) {
 	if r.DefaultBranch != "develop" {
 		t.Errorf("default branch changed unexpectedly: %s", r.DefaultBranch)
 	}
+
+	// Set a GitHub token; it replaces the credential map wholesale.
+	if _, err := runRepoCmd(t, st, "update", "-slug", "acme/widgets", "-gh-token", "ghp_x"); err != nil {
+		t.Fatal(err)
+	}
+	r, err = st.RepoBySlug(ctx, "acme/widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.ForgeCredentials["token"] != "ghp_x" || len(r.ForgeCredentials) != 1 {
+		t.Errorf("credentials = %v", r.ForgeCredentials)
+	}
 }
 
 func TestRepoUpdateValidation(t *testing.T) {
@@ -230,6 +260,10 @@ func TestRepoUpdateValidation(t *testing.T) {
 			"-clear-credentials", "-bb-username", "u", "-bb-app-password", "p"}},
 		{"unknown slug", []string{"update", "-slug", "no/such", "-default-branch", "x"}},
 		{"password without username", []string{"update", "-slug", "acme/widgets", "-bb-app-password", "p"}},
+		{"github token mixed with bitbucket pair", []string{"update", "-slug", "acme/widgets",
+			"-gh-token", "t", "-bb-username", "u", "-bb-app-password", "p"}},
+		{"clear and github token together", []string{"update", "-slug", "acme/widgets",
+			"-clear-credentials", "-gh-token", "t"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

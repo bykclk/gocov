@@ -78,10 +78,12 @@ type Forge interface {
 	// PostPRComment adds a comment to a pull request.
 	PostPRComment(ctx context.Context, repoSlug, prID, body string) error
 	// FindPRComment returns the id of the newest non-deleted top-level
-	// PR comment that was authored by the credential account and whose
-	// raw content starts with prefix, or "" when there is none. Used to
-	// update a previously posted comment in place; other authors must
-	// never match, so a look-alike comment cannot capture the slot.
+	// PR comment whose raw content starts with prefix, or "" when there
+	// is none. Used to update a previously posted comment in place; a
+	// look-alike comment by another author must never capture the slot —
+	// either by the implementation matching the credential account, or
+	// by the forge rejecting UpdatePRComment on foreign comments (the
+	// caller then falls back to posting a fresh comment).
 	FindPRComment(ctx context.Context, repoSlug, prID, prefix string) (string, error)
 	// UpdatePRComment replaces the body of an existing PR comment.
 	UpdatePRComment(ctx context.Context, repoSlug, prID, commentID, body string) error

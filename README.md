@@ -1,8 +1,8 @@
 # gocov
 
 Self-hostable coverage tracking — an open-source Coveralls/Codecov
-alternative. Single binary + Postgres. Bitbucket Cloud is the first
-supported forge. Supported formats: Go cover profiles, LCOV tracefiles
+alternative. Single binary + Postgres. Supported forges: Bitbucket Cloud
+and GitHub. Supported formats: Go cover profiles, LCOV tracefiles
 (JavaScript/TypeScript — Jest, Vitest, nyc, c8), JaCoCo XML
 (Java/Kotlin — Maven, Gradle, Android) and Cobertura XML
 (Python — coverage.py/pytest-cov; also PHPUnit, coverlet, gcovr); the
@@ -16,10 +16,11 @@ format is detected from the uploaded content.
 - `POST /api/v1/upload` API with per-repo Bearer tokens
 - SVG coverage badge per repo (`/badge/{workspace}/{repo}.svg`)
 - Web UI: repo list → upload list → per-file coverage table
-- Uploader CLI that auto-detects Bitbucket Pipelines environment
-  variables and falls back to git
-- Pushes a `coverage: X% (±Y%)` build status to Bitbucket commits when
-  the repo has an app password configured
+- Uploader CLI that auto-detects Bitbucket Pipelines and GitHub Actions
+  environment variables and falls back to git
+- Pushes a `coverage: X% (±Y%)` build status to Bitbucket commits (or a
+  commit status to GitHub) when the repo has forge credentials
+  configured
 - Coverage gate: per-repo minimums for total and diff coverage plus a
   drop tolerance; violations push a FAILED build status, so a Bitbucket
   merge check can block the PR
@@ -34,10 +35,11 @@ format is detected from the uploaded content.
   page requires login, allowed only for members of the workspaces the
   instance tracks (see "Enable Bitbucket sign-in"). Uploads, badges and
   health checks are unaffected; no passwords are ever stored
-- Diff coverage for pull requests: fetches the PR diff from Bitbucket,
+- Diff coverage for pull requests: fetches the PR diff from the forge,
   intersects changed lines with coverage blocks, and posts a PR comment
   listing uncovered changed lines — repeated uploads update the same
-  comment instead of stacking new ones
+  comment instead of stacking new ones. Works on Bitbucket and GitHub
+  alike
 - Coverage inside the PR, via Bitbucket Code Insights: every upload
   attaches a report card to its commit (total coverage, delta, diff
   coverage, gate verdict) that Bitbucket shows in the pull request's
@@ -98,14 +100,28 @@ docker compose exec server gocov-server repo add \
   -bb-username myuser -bb-app-password "$APP_PASSWORD"   # optional, for build statuses
 ```
 
+For a GitHub repo, the slug is `owner/repo` and the credential is a
+single access token (see "GitHub token permissions"):
+
+```sh
+docker compose exec server gocov-server repo add \
+  -slug myorg/myrepo -forge github \
+  -default-branch main \
+  -gh-token "$GITHUB_TOKEN"                              # optional, for statuses and PR comments
+```
+
+A GitHub org can also be onboarded wholesale: `workspace add -prefix
+myorg -forge github` — repos then register themselves on first upload,
+exactly like a Bitbucket workspace.
+
 Manage repos later with:
 
 ```sh
 gocov-server repo list                                   # slugs, branches, credential status
 gocov-server repo rotate-token -slug myworkspace/myrepo  # invalidates the old token
 gocov-server repo update -slug myworkspace/myrepo \
-  -default-branch develop                                # and/or -bb-username/-bb-app-password,
-                                                         # or -clear-credentials
+  -default-branch develop                                # and/or -bb-username/-bb-app-password
+                                                         # or -gh-token, or -clear-credentials
 gocov-server repo remove -slug myworkspace/myrepo -force # deletes uploads and raw profiles too;
                                                          # without -force only prints a summary
 gocov-server workspace list|rotate-token|update|remove   # workspace token management
@@ -185,6 +201,17 @@ In Bitbucket Pipelines (commit, branch, repo and PR id are auto-detected):
 ```
 
 with `GOCOV_SERVER` and `GOCOV_TOKEN` set as repository variables.
+
+In GitHub Actions (commit, branch, repo and PR number are auto-detected,
+including the PR head SHA on `pull_request` runs):
+
+```yaml
+- run: go test ./... -covermode=atomic -coverprofile=coverage.out
+- run: go run github.com/bykclk/gocov/cmd/gocov@latest upload coverage.out
+  env:
+    GOCOV_SERVER: ${{ vars.GOCOV_SERVER }}
+    GOCOV_TOKEN: ${{ secrets.GOCOV_TOKEN }}
+```
 
 On runners without a Go toolchain, use the prebuilt binaries from
 [GitHub Releases](https://github.com/bykclk/gocov/releases) instead
@@ -268,14 +295,16 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_BASE_URL`               | `http://localhost:8080` | public URL used in statuses |
 | `GOCOV_BITBUCKET_USERNAME`     | —                       | global Bitbucket bot account (with an API token, the account email) |
 | `GOCOV_BITBUCKET_APP_PASSWORD` | —                       | the bot's app password or scoped API token |
+| `GOCOV_GITHUB_TOKEN`           | —                       | global GitHub token for repos without their own credentials |
 | `GOCOV_OAUTH_BITBUCKET_KEY`    | —                       | OAuth consumer key; with the secret, turns on web UI sign-in |
 | `GOCOV_OAUTH_BITBUCKET_SECRET` | —                       | OAuth consumer secret       |
 | `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace slugs allowed to sign in |
 
-The global bot account is used by every repo that has no credentials of
-its own — for build statuses, PR comments, diff coverage and default
-branch detection. Per-repo credentials (`repo update -bb-username ...`)
-take precedence.
+The global bot credentials are used by every repo (of the matching
+forge) that has no credentials of its own — for build statuses, PR
+comments, diff coverage and default branch detection. Per-repo
+credentials (`repo update -bb-username ...` / `-gh-token ...`) take
+precedence.
 
 ### Bitbucket token permissions
 
@@ -295,6 +324,23 @@ scope is the fix.
 The OAuth consumer used for web UI sign-in is separate and needs the
 **Account: Read** and **Email** permissions on the consumer itself.
 
+### GitHub token permissions
+
+The GitHub credential (`GOCOV_GITHUB_TOKEN` or `repo add/update
+-gh-token`) is a personal access token of a user or bot account with
+access to the repos:
+
+- **Classic token**: the `repo` scope covers everything gocov does
+  (commit statuses, PR comments, PR diffs, file content, default
+  branch). Public repos get by with `public_repo`.
+- **Fine-grained token**: grant the repositories with **Contents:
+  Read** (file content, default branch, PR diffs), **Commit statuses:
+  Write** (build status) and **Pull requests: Write** (PR comment).
+
+Unlike Bitbucket, updating the PR comment in place needs no extra
+account scope — gocov recognizes its own comment by its `**gocov**`
+marker.
+
 ## Development
 
 ```sh
@@ -305,7 +351,7 @@ go build ./...
 The store, forge and blobstore interfaces each have test doubles
 (`internal/store/memory`, `internal/forge/fake`,
 `internal/blobstore/memory`), so handlers are fully testable without
-Postgres or Bitbucket.
+Postgres or a forge.
 
 The Postgres store additionally has integration tests that run against a
 real server when `GOCOV_TEST_DATABASE_URL` is set (they are skipped
