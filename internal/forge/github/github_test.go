@@ -337,13 +337,162 @@ func TestGetFileContentNotFound(t *testing.T) {
 	}
 }
 
-func TestPublishReportNotImplemented(t *testing.T) {
+func TestPublishReport(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody map[string]any
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
-		t.Error("no request expected")
+		gotMethod, gotPath = r.Method, r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		_, _ = w.Write([]byte(`{"id": 77}`))
 	})
-	err := c.PublishReport(context.Background(), "a/b", "sha", forge.Report{}, nil)
+
+	report := forge.Report{
+		Title:   "gocov coverage",
+		Details: "2 of 3 changed lines are covered by tests.",
+		Result:  forge.ReportPassed,
+		Link:    "https://gocov.example/uploads/1",
+		Data: []forge.ReportData{
+			{Title: "Total coverage", Type: forge.DataPercentage, Value: 80.0},
+			{Title: "Uncovered changed lines", Type: forge.DataNumber, Value: 1.0},
+			{Title: "Statements", Type: forge.DataText, Value: "8 / 10"},
+		},
+	}
+	annotations := []forge.Annotation{
+		{Path: "m/a.go", Line: 9, EndLine: 11, Summary: "Lines 9–11 of this change are not covered by tests"},
+		{Path: "m/b.go", Summary: "This changed file has no coverage data — nothing in it appears to be tested"},
+	}
+	if err := c.PublishReport(context.Background(), "acme/widgets", "abc123", report, annotations); err != nil {
+		t.Fatal(err)
+	}
+
+	if gotMethod != http.MethodPost || gotPath != "/repos/acme/widgets/check-runs" {
+		t.Errorf("%s %s", gotMethod, gotPath)
+	}
+	if gotBody["name"] != "gocov coverage" || gotBody["head_sha"] != "abc123" ||
+		gotBody["status"] != "completed" || gotBody["conclusion"] != "success" ||
+		gotBody["details_url"] != "https://gocov.example/uploads/1" ||
+		gotBody["external_id"] != "gocov" {
+		t.Errorf("payload = %v", gotBody)
+	}
+	output, _ := gotBody["output"].(map[string]any)
+	if output["title"] != "2 of 3 changed lines are covered by tests." {
+		t.Errorf("output title = %v", output["title"])
+	}
+	summary, _ := output["summary"].(string)
+	for _, want := range []string{
+		"2 of 3 changed lines are covered by tests.",
+		"| Total coverage | 80.0% |",
+		"| Uncovered changed lines | 1 |",
+		"| Statements | 8 / 10 |",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary missing %q:\n%s", want, summary)
+		}
+	}
+	anns, _ := output["annotations"].([]any)
+	if len(anns) != 2 {
+		t.Fatalf("annotations = %v", anns)
+	}
+	first, _ := anns[0].(map[string]any)
+	if first["path"] != "m/a.go" || first["start_line"] != 9.0 || first["end_line"] != 11.0 ||
+		first["annotation_level"] != "warning" ||
+		first["message"] != "Lines 9–11 of this change are not covered by tests" {
+		t.Errorf("annotation[0] = %v", first)
+	}
+	// File-level finding: the Checks API demands lines, so it anchors at 1.
+	second, _ := anns[1].(map[string]any)
+	if second["start_line"] != 1.0 || second["end_line"] != 1.0 {
+		t.Errorf("annotation[1] = %v", second)
+	}
+}
+
+func TestPublishReportConclusions(t *testing.T) {
+	var gotConclusion string
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotConclusion, _ = body["conclusion"].(string)
+		_, _ = w.Write([]byte(`{"id": 1}`))
+	})
+	for result, want := range map[string]string{
+		forge.ReportPassed: "success",
+		forge.ReportFailed: "failure",
+		"":                 "neutral",
+	} {
+		if err := c.PublishReport(context.Background(), "a/b", "sha", forge.Report{Title: "t", Result: result}, nil); err != nil {
+			t.Fatal(err)
+		}
+		if gotConclusion != want {
+			t.Errorf("result %q mapped to %q, want %q", result, gotConclusion, want)
+		}
+	}
+	if err := c.PublishReport(context.Background(), "a/b", "sha", forge.Report{Result: "bogus"}, nil); err == nil {
+		t.Error("want error for unknown result")
+	}
+}
+
+func TestPublishReportBatchesAnnotations(t *testing.T) {
+	// 120 annotations: 50 ride on the create, the rest arrive in two
+	// update batches appended to the created run.
+	type call struct {
+		method, path string
+		count        int
+	}
+	var calls []call
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		output, _ := body["output"].(map[string]any)
+		anns, _ := output["annotations"].([]any)
+		calls = append(calls, call{r.Method, r.URL.Path, len(anns)})
+		_, _ = w.Write([]byte(`{"id": 77}`))
+	})
+
+	annotations := make([]forge.Annotation, 120)
+	for i := range annotations {
+		annotations[i] = forge.Annotation{Path: "a.go", Line: i + 1, Summary: "s"}
+	}
+	if err := c.PublishReport(context.Background(), "acme/widgets", "abc", forge.Report{Title: "t"}, annotations); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []call{
+		{http.MethodPost, "/repos/acme/widgets/check-runs", 50},
+		{http.MethodPatch, "/repos/acme/widgets/check-runs/77", 50},
+		{http.MethodPatch, "/repos/acme/widgets/check-runs/77", 20},
+	}
+	if len(calls) != len(want) {
+		t.Fatalf("calls = %+v", calls)
+	}
+	for i := range want {
+		if calls[i] != want[i] {
+			t.Errorf("call[%d] = %+v, want %+v", i, calls[i], want[i])
+		}
+	}
+}
+
+func TestPublishReportForbiddenMapsToNotImplemented(t *testing.T) {
+	// Check-run writes are closed to classic tokens; the upload flow
+	// reports the sentinel as "skipped" instead of an error.
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message": "Resource not accessible by personal access token"}`, http.StatusForbidden)
+	})
+	err := c.PublishReport(context.Background(), "a/b", "sha", forge.Report{Title: "t"}, nil)
 	if !errors.Is(err, forge.ErrNotImplemented) {
 		t.Errorf("err = %v, want ErrNotImplemented", err)
+	}
+	if !strings.Contains(err.Error(), "check runs") {
+		t.Errorf("err = %v, want a check-run explanation", err)
+	}
+}
+
+func TestPublishReportHTTPError(t *testing.T) {
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	})
+	err := c.PublishReport(context.Background(), "a/b", "sha", forge.Report{Title: "t"}, nil)
+	if err == nil || errors.Is(err, forge.ErrNotImplemented) {
+		t.Errorf("err = %v, want a surfaced 500", err)
 	}
 }
 

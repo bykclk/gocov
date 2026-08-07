@@ -54,6 +54,15 @@ format is detected from the uploaded content.
   _[screenshot: coverage report card and inline annotations in a
   Bitbucket PR]_
 
+- On GitHub the same surface ships as a **check run** named `gocov
+  coverage`: a summary card with the identical data, a conclusion that
+  mirrors the coverage gate (success/failure, neutral without a gate) so
+  branch protection can require it, and inline annotations on uncovered
+  changed lines in the Files changed view. Re-uploads replace the run in
+  place. Writing check runs needs a credential GitHub allows to (see
+  "GitHub token permissions"); with other tokens the check run is
+  skipped while status, comment and gate keep working
+
 - Coverage trend chart: the repo page graphs total coverage over the
   branch's recent uploads (gate failures marked in red, every point
   links to its upload) — rendered as inline SVG on the server, no
@@ -330,16 +339,30 @@ The GitHub credential (`GOCOV_GITHUB_TOKEN` or `repo add/update
 -gh-token`) is a personal access token of a user or bot account with
 access to the repos:
 
-- **Classic token**: the `repo` scope covers everything gocov does
-  (commit statuses, PR comments, PR diffs, file content, default
-  branch). Public repos get by with `public_repo`.
+- **Classic token**: the `repo` scope covers commit statuses, PR
+  comments, PR diffs, file content and the default branch. Public repos
+  get by with `public_repo`. GitHub does **not** let classic tokens
+  write check runs — those uploads report `code_insights: skipped`
+  while everything else keeps working.
 - **Fine-grained token**: grant the repositories with **Contents:
   Read** (file content, default branch, PR diffs), **Commit statuses:
-  Write** (build status) and **Pull requests: Write** (PR comment).
+  Write** (build status), **Pull requests: Write** (PR comment) and
+  **Checks: Write** (the check run with inline annotations).
+
+GitHub documents check-run writes as a GitHub App capability; a
+fine-grained token with Checks: Write is the closest a plain credential
+gets, and coverage has historically had gaps on some repo types. If the
+check run is skipped for you, the commit status and PR comment still
+carry the full verdict.
 
 Unlike Bitbucket, updating the PR comment in place needs no extra
 account scope — gocov recognizes its own comment by its `**gocov**`
 marker.
+
+To make the coverage gate blocking on GitHub, add a branch protection
+rule under **Settings → Branches → Require status checks to pass** and
+pick `gocov` (the commit status — works with every credential) or
+`gocov coverage` (the check run). A failed gate then blocks the merge.
 
 ## Development
 

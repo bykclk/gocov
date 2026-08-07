@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strings"
@@ -190,6 +191,21 @@ func TestCodeInsightsSkippedWithoutCredentials(t *testing.T) {
 	}
 }
 
+// TestCodeInsightsSkippedWithReason covers a forge that wraps
+// ErrNotImplemented with an explanation — e.g. GitHub check runs being
+// closed to the credential type — which the response surfaces instead
+// of a bare "skipped".
+func TestCodeInsightsSkippedWithReason(t *testing.T) {
+	f := newFixture(t, map[string]string{"token": "t"})
+	f.forge.ReportErr = fmt.Errorf("github: %w: this GitHub credential cannot write check runs", forge.ErrNotImplemented)
+
+	resp := insightsUpload(t, f, map[string]string{"commit": "c1"})
+	want := "skipped: github: " + forge.ErrNotImplemented.Error() + ": this GitHub credential cannot write check runs"
+	if resp.CodeInsights != want {
+		t.Errorf("code_insights = %q, want %q", resp.CodeInsights, want)
+	}
+}
+
 // TestCodeInsightsFailureIsolation stubs the insights push to fail and
 // verifies the rest of the upload — response, build status, PR comment —
 // is identical to a healthy run.
@@ -238,9 +254,9 @@ func TestInsightsAnnotationsCollapseRanges(t *testing.T) {
 	}
 	want := []forge.Annotation{
 		{Path: "c.go", Summary: "This changed file has no coverage data — nothing in it appears to be tested"},
-		{Path: "a.go", Line: 5, Summary: "Lines 5–7 of this change are not covered by tests"},
-		{Path: "a.go", Line: 10, Summary: "Line 10 of this change is not covered by tests"},
-		{Path: "b.go", Line: 1, Summary: "Line 1 of this change is not covered by tests"},
+		{Path: "a.go", Line: 5, EndLine: 7, Summary: "Lines 5–7 of this change are not covered by tests"},
+		{Path: "a.go", Line: 10, EndLine: 10, Summary: "Line 10 of this change is not covered by tests"},
+		{Path: "b.go", Line: 1, EndLine: 1, Summary: "Line 1 of this change is not covered by tests"},
 	}
 	if len(anns) != len(want) {
 		t.Fatalf("annotations = %+v", anns)

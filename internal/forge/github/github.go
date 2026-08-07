@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -273,13 +274,153 @@ func (c *Client) GetFileContent(ctx context.Context, repoSlug, commitSHA, path s
 	return data, nil
 }
 
-// PublishReport will become a Check Run with inline annotations; until
-// then the server reports code insights as skipped for GitHub repos.
+var reportConclusions = map[string]string{
+	forge.ReportPassed: "success",
+	forge.ReportFailed: "failure",
+	"":                 "neutral", // data without a verdict: no gate configured
+}
+
+// annotationsPerRequest is the Checks API's cap per request; further
+// annotations are appended through the update endpoint.
+const annotationsPerRequest = 50
+
+// PublishReport attaches the coverage report to the commit as a check
+// run named after the report title, with one inline annotation per
+// uncovered range. Every publish creates a fresh run: GitHub surfaces
+// only the newest run per name and commit, which yields the replace
+// semantics the contract demands — updating the previous run instead
+// would append its annotations to the stale ones, never remove them.
 func (c *Client) PublishReport(ctx context.Context, repoSlug, commitSHA string, report forge.Report, annotations []forge.Annotation) error {
-	return forge.ErrNotImplemented
+	conclusion, ok := reportConclusions[report.Result]
+	if !ok {
+		return fmt.Errorf("github: unknown report result %q", report.Result)
+	}
+	output := map[string]any{
+		"title":   report.Details,
+		"summary": checkRunSummary(report),
+	}
+	first := annotations
+	if len(first) > annotationsPerRequest {
+		first = first[:annotationsPerRequest]
+	}
+	if len(first) > 0 {
+		output["annotations"] = checkRunAnnotations(first)
+	}
+	payload := map[string]any{
+		"name":        report.Title,
+		"head_sha":    commitSHA,
+		"external_id": "gocov",
+		"status":      "completed",
+		"conclusion":  conclusion,
+		"output":      output,
+	}
+	if report.Link != "" {
+		payload["details_url"] = report.Link
+	}
+	var created struct {
+		ID int64 `json:"id"`
+	}
+	path := fmt.Sprintf("/repos/%s/check-runs", repoSlug)
+	if err := c.sendJSON(ctx, http.MethodPost, path, payload, &created); err != nil {
+		return checkRunError(err)
+	}
+
+	// Annotations beyond the per-request cap are appended through the
+	// update endpoint, batch by batch, onto the run just created.
+	for start := annotationsPerRequest; start < len(annotations); start += annotationsPerRequest {
+		end := min(start+annotationsPerRequest, len(annotations))
+		batch := map[string]any{
+			"output": map[string]any{
+				"title":       report.Details,
+				"summary":     checkRunSummary(report),
+				"annotations": checkRunAnnotations(annotations[start:end]),
+			},
+		}
+		updatePath := fmt.Sprintf("%s/%d", path, created.ID)
+		if err := c.sendJSON(ctx, http.MethodPatch, updatePath, batch, nil); err != nil {
+			return checkRunError(err)
+		}
+	}
+	return nil
+}
+
+// checkRunError maps the Checks API's 403 to a wrapped ErrNotImplemented:
+// GitHub reserves check-run writes for GitHub Apps (and, with a Checks
+// write grant, fine-grained tokens) — for a plain token that is a
+// platform limit, not a configuration accident worth failing over. The
+// commit status and PR comment still carry the coverage verdict.
+func checkRunError(err error) error {
+	var ae *apiError
+	if errors.As(err, &ae) && ae.status == http.StatusForbidden {
+		return fmt.Errorf("%w: this GitHub credential cannot write check runs (needs a fine-grained token with checks:write, or a GitHub App): %s", forge.ErrNotImplemented, ae.msg)
+	}
+	return err
+}
+
+// checkRunSummary renders the report card as the check run's markdown
+// summary: the data fields as a table, details on top.
+func checkRunSummary(report forge.Report) string {
+	var sb strings.Builder
+	sb.WriteString(report.Details)
+	if len(report.Data) > 0 {
+		sb.WriteString("\n\n|   |   |\n| --- | --- |\n")
+		for _, d := range report.Data {
+			sb.WriteString("| ")
+			sb.WriteString(strings.ReplaceAll(d.Title, "|", "\\|"))
+			sb.WriteString(" | ")
+			sb.WriteString(reportValue(d))
+			sb.WriteString(" |\n")
+		}
+	}
+	return sb.String()
+}
+
+// reportValue formats one report data value for the summary table.
+func reportValue(d forge.ReportData) string {
+	switch v := d.Value.(type) {
+	case float64:
+		if d.Type == forge.DataPercentage {
+			return fmt.Sprintf("%.1f%%", v)
+		}
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case string:
+		return strings.ReplaceAll(v, "|", "\\|")
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+// checkRunAnnotations maps forge annotations to Checks API objects. The
+// API has no file-level annotations, so Line 0 anchors at line 1; an
+// untested line is a warning, not a failure.
+func checkRunAnnotations(anns []forge.Annotation) []map[string]any {
+	items := make([]map[string]any, 0, len(anns))
+	for _, a := range anns {
+		start, end := a.Line, a.EndLine
+		if start == 0 {
+			start = 1
+		}
+		if end < start {
+			end = start
+		}
+		items = append(items, map[string]any{
+			"path":             a.Path,
+			"start_line":       start,
+			"end_line":         end,
+			"annotation_level": "warning",
+			"message":          a.Summary,
+		})
+	}
+	return items
 }
 
 func (c *Client) send(ctx context.Context, method, path string, payload any) error {
+	return c.sendJSON(ctx, method, path, payload, nil)
+}
+
+// sendJSON posts payload and, when out is non-nil, decodes the response
+// body into it.
+func (c *Client) sendJSON(ctx context.Context, method, path string, payload, out any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -298,9 +439,26 @@ func (c *Client) send(ctx context.Context, method, path string, payload any) err
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("github: %s returned %d: %s", path, resp.StatusCode, msg)
+		return &apiError{
+			status: resp.StatusCode,
+			msg:    fmt.Sprintf("github: %s returned %d: %s", path, resp.StatusCode, msg),
+		}
+	}
+	if out != nil {
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out); err != nil {
+			return fmt.Errorf("github: decoding %s response: %w", path, err)
+		}
 	}
 	return nil
 }
+
+// apiError carries the HTTP status of a failed GitHub call so callers
+// can react to specific rejections.
+type apiError struct {
+	status int
+	msg    string
+}
+
+func (e *apiError) Error() string { return e.msg }
 
 var _ forge.Forge = (*Client)(nil)
