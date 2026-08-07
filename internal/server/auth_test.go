@@ -21,18 +21,27 @@ import (
 
 // fakeProvider is an auth.Provider whose Identity is canned.
 type fakeProvider struct {
-	identity *auth.Identity
-	err      error
-	gotCode  string
+	name            string // "" means "bitbucket"
+	identity        *auth.Identity
+	err             error
+	gotCode         string
+	gotRedirectURIs []string // from AuthorizeURL and Identity calls
 }
 
-func (f *fakeProvider) Name() string { return "bitbucket" }
+func (f *fakeProvider) Name() string {
+	if f.name == "" {
+		return "bitbucket"
+	}
+	return f.name
+}
 func (f *fakeProvider) AuthorizeURL(state, redirectURI string) string {
-	return "https://bb.example/authorize?state=" + url.QueryEscape(state) +
+	f.gotRedirectURIs = append(f.gotRedirectURIs, redirectURI)
+	return "https://" + f.Name() + ".example/authorize?state=" + url.QueryEscape(state) +
 		"&redirect_uri=" + url.QueryEscape(redirectURI)
 }
-func (f *fakeProvider) Identity(_ context.Context, code, _ string) (*auth.Identity, error) {
+func (f *fakeProvider) Identity(_ context.Context, code, redirectURI string) (*auth.Identity, error) {
 	f.gotCode = code
+	f.gotRedirectURIs = append(f.gotRedirectURIs, redirectURI)
 	return f.identity, f.err
 }
 
@@ -49,6 +58,16 @@ func memberIdentity() *auth.Identity {
 // nil) over a store tracking the repo acme/widgets.
 func newAuthFixture(t *testing.T, provider auth.Provider, allowed []string) *fixture {
 	t.Helper()
+	var providers []auth.Provider
+	if provider != nil {
+		providers = append(providers, provider)
+	}
+	return newMultiAuthFixture(t, providers, allowed)
+}
+
+// newMultiAuthFixture is newAuthFixture for any number of providers.
+func newMultiAuthFixture(t *testing.T, providers []auth.Provider, allowed []string) *fixture {
+	t.Helper()
 	st := storemem.New()
 	repo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "secret-token", DefaultBranch: "main"}
 	if err := st.CreateRepo(context.Background(), repo); err != nil {
@@ -60,7 +79,7 @@ func newAuthFixture(t *testing.T, provider auth.Provider, allowed []string) *fix
 		Parsers:           map[string]profile.Parser{"go": profile.GoParser{}},
 		Forges:            map[string]forge.Factory{"bitbucket": forgefake.New().Factory()},
 		BaseURL:           "https://gocov.example",
-		Auth:              provider,
+		Auths:             providers,
 		AllowedWorkspaces: allowed,
 	})
 	return &fixture{srv: srv, store: st, repo: repo}
@@ -341,6 +360,70 @@ func TestExpiredSessionDoesNotAuthenticate(t *testing.T) {
 	rec := get(f, "/", &http.Cookie{Name: sessionCookie, Value: "expired-token"})
 	if rec.Code != http.StatusFound {
 		t.Errorf("expired session: status = %d, want login redirect", rec.Code)
+	}
+}
+
+func TestTwoProviders(t *testing.T) {
+	bb := &fakeProvider{identity: memberIdentity()}
+	gh := &fakeProvider{name: "github", identity: &auth.Identity{
+		ForgeUUID:   "12345",
+		DisplayName: "Hub Dev",
+		Email:       "hub@example.com",
+		Workspaces:  []string{"acme"},
+	}}
+	f := newMultiAuthFixture(t, []auth.Provider{bb, gh}, nil)
+
+	// The login page renders one button per provider, in order.
+	login := get(f, "/login")
+	body := login.Body.String()
+	bbIdx := strings.Index(body, `href="/oauth/bitbucket/start`)
+	ghIdx := strings.Index(body, `href="/oauth/github/start`)
+	if bbIdx < 0 || ghIdx < 0 || bbIdx > ghIdx {
+		t.Errorf("login buttons missing or out of order (bb at %d, gh at %d):\n%s", bbIdx, ghIdx, body)
+	}
+	if !strings.Contains(body, "Sign in with GitHub") || !strings.Contains(body, "Sign in with Bitbucket") {
+		t.Errorf("login page misses provider labels:\n%s", body)
+	}
+
+	// The GitHub flow signs in through the GitHub provider only, with a
+	// forge-specific callback as the redirect URI.
+	start := get(f, "/oauth/github/start")
+	if start.Code != http.StatusFound {
+		t.Fatalf("github start: status = %d", start.Code)
+	}
+	if loc := start.Header().Get("Location"); !strings.HasPrefix(loc, "https://github.example/authorize?") {
+		t.Fatalf("github start redirected to %q", loc)
+	}
+	stateCk := cookieNamed(t, start, stateCookie)
+	state, _, _ := strings.Cut(stateCk.Value, "|")
+	cb := get(f, "/oauth/github/callback?code=ghcode&state="+url.QueryEscape(state), stateCk)
+	if cb.Code != http.StatusFound || cb.Header().Get("Location") != "/" {
+		t.Fatalf("github callback: %d -> %q", cb.Code, cb.Header().Get("Location"))
+	}
+	if gh.gotCode != "ghcode" || bb.gotCode != "" {
+		t.Errorf("codes routed wrong: gh %q, bb %q", gh.gotCode, bb.gotCode)
+	}
+	for _, uri := range gh.gotRedirectURIs {
+		if uri != "https://gocov.example/oauth/github/callback" {
+			t.Errorf("github redirect URI = %q", uri)
+		}
+	}
+
+	// The provisioned user belongs to the github forge.
+	users, err := f.store.ListUsers(context.Background())
+	if err != nil || len(users) != 1 {
+		t.Fatalf("users = %v, %v", users, err)
+	}
+	if users[0].Forge != "github" || users[0].ForgeUUID != "12345" {
+		t.Errorf("user = %+v", users[0])
+	}
+
+	// Unknown forges have no login routes.
+	if rec := get(f, "/oauth/gitlab/start"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown forge start: status = %d, want 404", rec.Code)
+	}
+	if rec := get(f, "/oauth/gitlab/callback?code=x&state=y"); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown forge callback: status = %d, want 404", rec.Code)
 	}
 }
 

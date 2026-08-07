@@ -19,16 +19,19 @@ services:
       DATABASE_URL: postgres://gocov:gocov@db:5432/gocov
       GOCOV_ADDR: ":8080"
       GOCOV_BASE_URL: "http://localhost:8080"
-      # Optional global Bitbucket bot account (e.g. from a .env file next
-      # to this compose file). Repos without credentials of their own use
-      # it for build statuses, PR comments and diff coverage.
+      # Optional global bot credentials (e.g. from a .env file next to
+      # this compose file). Repos without credentials of their own use
+      # them for build statuses, PR comments and diff coverage.
       GOCOV_BITBUCKET_USERNAME: ${GOCOV_BITBUCKET_USERNAME:-}
       GOCOV_BITBUCKET_APP_PASSWORD: ${GOCOV_BITBUCKET_APP_PASSWORD:-}
-      # Optional Bitbucket OAuth consumer; setting both turns on (and
-      # from then on requires) web UI sign-in. See "Enable Bitbucket
+      GOCOV_GITHUB_TOKEN: ${GOCOV_GITHUB_TOKEN:-}
+      # Optional OAuth credentials; setting a pair turns on (and from
+      # then on requires) web UI sign-in with that forge. See "Enable
       # sign-in" in the README.
       GOCOV_OAUTH_BITBUCKET_KEY: ${GOCOV_OAUTH_BITBUCKET_KEY:-}
       GOCOV_OAUTH_BITBUCKET_SECRET: ${GOCOV_OAUTH_BITBUCKET_SECRET:-}
+      GOCOV_OAUTH_GITHUB_KEY: ${GOCOV_OAUTH_GITHUB_KEY:-}
+      GOCOV_OAUTH_GITHUB_SECRET: ${GOCOV_OAUTH_GITHUB_SECRET:-}
       GOCOV_ALLOWED_WORKSPACES: ${GOCOV_ALLOWED_WORKSPACES:-}
     ports:
       - "8080:8080"

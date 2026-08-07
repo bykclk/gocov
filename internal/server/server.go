@@ -43,10 +43,11 @@ type Config struct {
 	// (e.g. a global bot account) used for repos that have none of their
 	// own. Per-repo credentials always take precedence.
 	DefaultForgeCredentials map[string]map[string]string
-	// Auth enables web UI sign-in. Nil keeps the UI open (with a banner
+	// Auths enables web UI sign-in, one provider per forge, rendered as
+	// one login button each. Empty keeps the UI open (with a banner
 	// explaining how to enable sign-in); the upload API, badges and health
 	// checks are unaffected either way.
-	Auth auth.Provider
+	Auths []auth.Provider
 	// AllowedWorkspaces overrides the derived "tracked workspaces" set
 	// that gates who may sign in. Empty means derive from the store.
 	AllowedWorkspaces []string
@@ -66,7 +67,10 @@ type Server struct {
 	health       func(ctx context.Context) error
 	defaultCreds map[string]map[string]string
 
-	auth              auth.Provider
+	// auths holds the sign-in providers by forge name; authOrder keeps
+	// the configured order for the login-page buttons.
+	auths             map[string]auth.Provider
+	authOrder         []auth.Provider
 	allowedWorkspaces []string
 	// secureCookies marks auth cookies Secure when the public base URL is
 	// https (the UI is then served through TLS or a terminating proxy).
@@ -115,9 +119,13 @@ func New(cfg Config) *Server {
 		health:       cfg.Health,
 		defaultCreds: cfg.DefaultForgeCredentials,
 
-		auth:              cfg.Auth,
+		auths:             map[string]auth.Provider{},
+		authOrder:         cfg.Auths,
 		allowedWorkspaces: cfg.AllowedWorkspaces,
 		secureCookies:     strings.HasPrefix(cfg.BaseURL, "https://"),
+	}
+	for _, p := range cfg.Auths {
+		s.auths[p.Name()] = p
 	}
 	s.routes()
 	s.handler = s.requireAuth(s.mux)
@@ -130,8 +138,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.Handle("GET /static/", cacheStatic(http.FileServerFS(staticFS)))
 	s.mux.HandleFunc("GET /login", s.handleLogin)
-	s.mux.HandleFunc("GET /oauth/bitbucket/start", s.handleOAuthStart)
-	s.mux.HandleFunc("GET /oauth/bitbucket/callback", s.handleOAuthCallback)
+	s.mux.HandleFunc("GET /oauth/{forge}/start", s.handleOAuthStart)
+	s.mux.HandleFunc("GET /oauth/{forge}/callback", s.handleOAuthCallback)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
@@ -195,7 +203,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		return
 	}
 	// Layout-level auth state: the open-UI banner and the nav user chip.
-	data["AuthOpen"] = s.auth == nil
+	data["AuthOpen"] = !s.authEnabled()
 	data["CurrentUser"] = currentUser(r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout", data); err != nil {

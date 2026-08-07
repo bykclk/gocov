@@ -4,9 +4,9 @@
   <div class="card login-card">
     <h1>Sign in</h1>
     {{if .Denied}}
-    <p class="notice fail">Your Bitbucket account has no access to this instance. Sign-in is limited
-    to members of the Bitbucket workspaces tracked here; ask the operator to add you to one of
-    those workspaces (or to <code>GOCOV_ALLOWED_WORKSPACES</code>).</p>
+    <p class="notice fail">Your account has no access to this instance. Sign-in is limited
+    to members of the workspaces and organizations tracked here; ask the operator to add you to one
+    of them (or to <code>GOCOV_ALLOWED_WORKSPACES</code>).</p>
     {{if .Workspaces}}
     <p class="muted small login-workspaces">Tracked workspaces:
     {{range $i, $ws := .Workspaces}}{{if $i}}, {{end}}<code>{{$ws}}</code>{{end}}</p>
@@ -14,9 +14,11 @@
     {{else if .Failed}}
     <p class="notice fail">Sign-in did not complete. Please try again.</p>
     {{end}}
-    <p class="sub">Use the Bitbucket account that is a member of this instance&rsquo;s workspaces.
+    <p class="sub">Use the account that is a member of this instance&rsquo;s workspaces.
     No separate password is needed.</p>
-    <a class="btn primary" href="/oauth/bitbucket/start?next={{.Next}}">Sign in with Bitbucket</a>
+    {{range .Providers}}
+    <a class="btn primary login-btn" href="/oauth/{{.Name}}/start?next={{$.Next}}">Sign in with {{.Label}}</a>
+    {{end}}
   </div>
 </div>
 {{end}}

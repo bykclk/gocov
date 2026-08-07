@@ -16,10 +16,12 @@
 // optionally GOCOV_BITBUCKET_USERNAME / GOCOV_BITBUCKET_APP_PASSWORD
 // and/or GOCOV_GITHUB_TOKEN for global bot credentials used by repos
 // without their own.
-// Setting GOCOV_OAUTH_BITBUCKET_KEY / GOCOV_OAUTH_BITBUCKET_SECRET (an
-// OAuth consumer) enables — and from then on requires — Bitbucket sign-in
-// for the web UI; GOCOV_ALLOWED_WORKSPACES (comma-separated) optionally
-// overrides which workspace members may sign in.
+// Setting GOCOV_OAUTH_BITBUCKET_KEY / GOCOV_OAUTH_BITBUCKET_SECRET (a
+// Bitbucket OAuth consumer) and/or GOCOV_OAUTH_GITHUB_KEY /
+// GOCOV_OAUTH_GITHUB_SECRET (a GitHub OAuth app) enables — and from then
+// on requires — sign-in for the web UI, one login button per configured
+// forge; GOCOV_ALLOWED_WORKSPACES (comma-separated) optionally overrides
+// which workspace/org members may sign in.
 package main
 
 import (
@@ -38,6 +40,7 @@ import (
 
 	"github.com/bykclk/gocov/internal/auth"
 	authbb "github.com/bykclk/gocov/internal/auth/bitbucket"
+	authgh "github.com/bykclk/gocov/internal/auth/github"
 	blobpg "github.com/bykclk/gocov/internal/blobstore/postgres"
 	"github.com/bykclk/gocov/internal/forge"
 	"github.com/bykclk/gocov/internal/forge/bitbucket"
@@ -142,16 +145,27 @@ func serve() error {
 		log.Info("global github credentials configured")
 	}
 
-	// Configuring an OAuth consumer is the switch that turns sign-in on;
-	// without one the UI stays open and shows a banner saying so.
-	var authProvider auth.Provider
+	// Configuring an OAuth consumer/app is the switch that turns sign-in
+	// on; without one the UI stays open and shows a banner saying so.
+	var authProviders []auth.Provider
 	oauthKey, oauthSecret := os.Getenv("GOCOV_OAUTH_BITBUCKET_KEY"), os.Getenv("GOCOV_OAUTH_BITBUCKET_SECRET")
 	switch {
 	case oauthKey != "" && oauthSecret != "":
-		authProvider = authbb.New(oauthKey, oauthSecret)
+		authProviders = append(authProviders, authbb.New(oauthKey, oauthSecret))
 		log.Info("bitbucket sign-in enabled", "callback", strings.TrimSuffix(baseURL, "/")+"/oauth/bitbucket/callback")
 	case oauthKey != "" || oauthSecret != "":
-		log.Warn("GOCOV_OAUTH_BITBUCKET_KEY and GOCOV_OAUTH_BITBUCKET_SECRET must both be set; web UI stays open")
+		log.Warn("GOCOV_OAUTH_BITBUCKET_KEY and GOCOV_OAUTH_BITBUCKET_SECRET must both be set; ignoring")
+	}
+	ghKey, ghSecret := os.Getenv("GOCOV_OAUTH_GITHUB_KEY"), os.Getenv("GOCOV_OAUTH_GITHUB_SECRET")
+	switch {
+	case ghKey != "" && ghSecret != "":
+		authProviders = append(authProviders, authgh.New(ghKey, ghSecret))
+		log.Info("github sign-in enabled", "callback", strings.TrimSuffix(baseURL, "/")+"/oauth/github/callback")
+	case ghKey != "" || ghSecret != "":
+		log.Warn("GOCOV_OAUTH_GITHUB_KEY and GOCOV_OAUTH_GITHUB_SECRET must both be set; ignoring")
+	}
+	if len(authProviders) == 0 {
+		log.Info("no sign-in provider configured; web UI stays open")
 	}
 	var allowedWorkspaces []string
 	for _, ws := range strings.Split(os.Getenv("GOCOV_ALLOWED_WORKSPACES"), ",") {
@@ -178,7 +192,7 @@ func serve() error {
 		Health:  st.Pool().Ping,
 
 		DefaultForgeCredentials: defaultCreds,
-		Auth:                    authProvider,
+		Auths:                   authProviders,
 		AllowedWorkspaces:       allowedWorkspaces,
 	})
 

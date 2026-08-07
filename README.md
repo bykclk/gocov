@@ -31,10 +31,11 @@ format is detected from the uploaded content.
   no `path_prefix`, recorded paths that carry an unmapped leading
   prefix (a Go module path, a CI checkout directory) are resolved by
   probing trimmed variants against the forge
-- Web UI sign-in with Bitbucket: configure an OAuth consumer and every
-  page requires login, allowed only for members of the workspaces the
-  instance tracks (see "Enable Bitbucket sign-in"). Uploads, badges and
-  health checks are unaffected; no passwords are ever stored
+- Web UI sign-in with Bitbucket and/or GitHub: configure an OAuth
+  consumer/app and every page requires login, allowed only for members
+  of the workspaces and orgs the instance tracks (see "Enable
+  sign-in"). Uploads, badges and health checks are unaffected; no
+  passwords are ever stored
 - Diff coverage for pull requests: fetches the PR diff from the forge,
   intersects changed lines with coverage blocks, and posts a PR comment
   listing uncovered changed lines — repeated uploads update the same
@@ -136,12 +137,15 @@ gocov-server repo remove -slug myworkspace/myrepo -force # deletes uploads and r
 gocov-server workspace list|rotate-token|update|remove   # workspace token management
 ```
 
-### Enable Bitbucket sign-in
+### Enable sign-in (Bitbucket and/or GitHub)
 
 Out of the box the web UI is open and shows a banner saying so — nothing
-changes on upgrade until you opt in. To require sign-in:
+changes on upgrade until you opt in. Configure one or both providers;
+each renders as its own button on the login page.
 
-1. In Bitbucket, create an OAuth consumer under **Workspace settings →
+For **Bitbucket**:
+
+1. Create an OAuth consumer under **Workspace settings →
    OAuth consumers → Add consumer** with
    - **Callback URL**: `https://your-gocov-host/oauth/bitbucket/callback`
      (must be exactly `GOCOV_BASE_URL` + `/oauth/bitbucket/callback`)
@@ -154,15 +158,34 @@ GOCOV_OAUTH_BITBUCKET_KEY=...
 GOCOV_OAUTH_BITBUCKET_SECRET=...
 ```
 
-From then on every UI page requires signing in with a Bitbucket account.
-Access is decided at login time by workspace membership: by default,
-members of any workspace the instance tracks (registered workspaces and
-the workspace part of registered repo slugs) may sign in, and everyone
-else gets a clear denial page. Set `GOCOV_ALLOWED_WORKSPACES` (comma-
-separated workspace slugs) to replace the derived set with an explicit
-list. Accounts are provisioned on first successful sign-in — there is
-no user bookkeeping, and gocov never sees or stores passwords (the
-Bitbucket tokens are discarded right after login).
+For **GitHub**:
+
+1. Create an OAuth app under **Settings → Developer settings → OAuth
+   Apps → New OAuth App** (on your account or org) with
+   - **Authorization callback URL**:
+     `https://your-gocov-host/oauth/github/callback`
+2. Set the app's client id and secret on the server:
+
+```sh
+GOCOV_OAUTH_GITHUB_KEY=...
+GOCOV_OAUTH_GITHUB_SECRET=...
+```
+
+gocov requests the read-only `read:org` and `user:email` scopes at
+login. Note that org members may need to grant/request the app's access
+to the org once (GitHub's third-party application policy) for the org
+to appear in their membership.
+
+From then on every UI page requires signing in. Access is decided at
+login time by membership: by default, members of any workspace/org the
+instance tracks (registered workspaces and the workspace part of
+registered repo slugs) may sign in, and everyone else gets a clear
+denial page; on GitHub the account's own username also counts, so
+user-namespace repos admit their owner. Set `GOCOV_ALLOWED_WORKSPACES`
+(comma-separated workspace/org slugs) to replace the derived set with
+an explicit list. Accounts are provisioned on first successful sign-in
+— there is no user bookkeeping, and gocov never sees or stores
+passwords (the forge tokens are discarded right after login).
 
 CI is unaffected either way: the upload API keeps its Bearer tokens,
 badges stay embeddable, `/healthz` stays open.
@@ -305,9 +328,11 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_BITBUCKET_USERNAME`     | —                       | global Bitbucket bot account (with an API token, the account email) |
 | `GOCOV_BITBUCKET_APP_PASSWORD` | —                       | the bot's app password or scoped API token |
 | `GOCOV_GITHUB_TOKEN`           | —                       | global GitHub token for repos without their own credentials |
-| `GOCOV_OAUTH_BITBUCKET_KEY`    | —                       | OAuth consumer key; with the secret, turns on web UI sign-in |
-| `GOCOV_OAUTH_BITBUCKET_SECRET` | —                       | OAuth consumer secret       |
-| `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace slugs allowed to sign in |
+| `GOCOV_OAUTH_BITBUCKET_KEY`    | —                       | Bitbucket OAuth consumer key; with the secret, turns on web UI sign-in |
+| `GOCOV_OAUTH_BITBUCKET_SECRET` | —                       | Bitbucket OAuth consumer secret |
+| `GOCOV_OAUTH_GITHUB_KEY`       | —                       | GitHub OAuth app client id; with the secret, turns on web UI sign-in |
+| `GOCOV_OAUTH_GITHUB_SECRET`    | —                       | GitHub OAuth app client secret |
+| `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace/org slugs allowed to sign in |
 
 The global bot credentials are used by every repo (of the matching
 forge) that has no credentials of its own — for build statuses, PR
