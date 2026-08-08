@@ -190,6 +190,38 @@ passwords (the forge tokens are discarded right after login).
 CI is unaffected either way: the upload API keeps its Bearer tokens,
 badges stay embeddable, `/healthz` stays open.
 
+### Hosted mode (self-service signup)
+
+`GOCOV_MODE=hosted` turns the instance into a self-service one: any
+forge account may sign in, and a user who belongs to no tracked
+workspace lands on **/register**, which lists the workspaces their
+forge account is a member of (captured at sign-in). Claiming one
+creates the workspace, makes the user a member and shows the upload
+token — once; afterwards it can only be rotated. Only workspaces the
+forge itself reports for the account can be registered, so there is
+nothing to dispute: if a colleague registered your workspace first,
+signing in simply makes you a member.
+
+Registration lands on an onboarding page: the forge-appropriate CI
+snippet with the server URL and token pre-filled, and a live "waiting
+for your first upload" state that flips to the repo link once coverage
+arrives.
+
+The default (`GOCOV_MODE=private`) keeps exactly the behavior described
+above — self-hosted deployments upgrade with zero change. Hosted mode
+requires at least one sign-in provider.
+
+### Workspace settings in the UI
+
+Signed-in members manage their workspaces from the dashboard (private
+and hosted mode alike): rotate the upload token (the old one dies
+immediately; the new one is shown once), change the default branch and
+gate defaults for auto-registered repos, and set a workspace-level bot
+credential used for statuses, PR comments and insights on repos without
+their own. Stored secrets are never rendered back — the page only shows
+whether a credential is configured. The CLI (`gocov-server workspace
+...`) keeps working; the UI is an addition, not a migration.
+
 ```sh
 gocov-server user list                          # who has signed in
 gocov-server user remove -email jane@example.com  # revoke immediately
@@ -344,12 +376,13 @@ delta_pct, build_status}`. Uploads carrying a `pr_id` additionally get
 | `GOCOV_OAUTH_GITHUB_KEY`       | —                       | GitHub OAuth app client id; with the secret, turns on web UI sign-in |
 | `GOCOV_OAUTH_GITHUB_SECRET`    | —                       | GitHub OAuth app client secret |
 | `GOCOV_ALLOWED_WORKSPACES`     | derived from tracked repos | comma-separated workspace/org slugs allowed to sign in |
+| `GOCOV_MODE`                   | `private`               | `hosted` opens sign-in to any forge account with self-service workspace registration |
 
-The global bot credentials are used by every repo (of the matching
-forge) that has no credentials of its own — for build statuses, PR
-comments, diff coverage and default branch detection. Per-repo
-credentials (`repo update -bb-username ...` / `-gh-token ...`) take
-precedence.
+Forge credentials resolve per repo along a precedence chain: per-repo
+credentials (`repo update -bb-username ...` / `-gh-token ...`) beat
+workspace credentials (set on the workspace settings page in the UI)
+beat the global bot credentials above. Whichever wins is used for build
+statuses, PR comments, diff coverage and default branch detection.
 
 ### Bitbucket token permissions
 

@@ -72,6 +72,10 @@ h2 { font-size: 16px; margin: 26px 0 10px; }
 
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
   box-shadow: var(--shadow); overflow-x: auto; }
+/* prose cards (workspace settings, onboarding): padded content, stacked
+   with breathing room */
+.card.pad { padding: 2px 20px 18px; margin-bottom: 16px; }
+.card.pad h2:first-child { margin-top: 20px; }
 
 /* stat summary row */
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 22px; }

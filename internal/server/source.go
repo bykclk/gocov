@@ -120,7 +120,7 @@ func (s *Server) fetchSource(r *http.Request, repo *store.Repo, u *store.Upload,
 		return nil, notFound
 	}
 
-	fg, err := s.forgeFor(repo)
+	fg, err := s.forgeFor(r.Context(), repo)
 	if err != nil {
 		return nil, "no working forge integration: " + err.Error()
 	}

@@ -1,0 +1,36 @@
+{{define "title"}}gocov — register a workspace{{end}}
+{{define "content"}}
+<h1>Register a workspace</h1>
+<p class="sub">Pick one of your {{.Forge}} workspaces to start tracking coverage for its repos.</p>
+<div class="card">
+{{if .Rows}}
+<table>
+<thead><tr><th>Workspace</th><th>Status</th><th></th></tr></thead>
+<tbody>
+{{range .Rows}}
+<tr>
+<td class="mono">{{.Prefix}}</td>
+{{if eq .State "member"}}
+<td><span class="muted">registered — you&rsquo;re a member</span></td>
+<td><a class="btn" href="/">Open dashboard</a></td>
+{{else if eq .State "registered"}}
+<td><span class="muted">registered</span></td>
+<td><form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn" type="submit">Join</button></form></td>
+{{else if eq .State "taken"}}
+<td><span class="muted">name in use under another forge</span></td>
+<td></td>
+{{else}}
+<td><span class="muted">not registered yet</span></td>
+<td><form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn primary" type="submit">Register</button></form></td>
+{{end}}
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<div class="empty">Your {{.Forge}} account reported no workspaces at sign-in.
+If you were just added to one, sign out and sign in again to refresh the list.</div>
+{{end}}
+</div>
+<p class="muted small">This list was captured when you signed in; sign in again to refresh it.</p>
+{{end}}

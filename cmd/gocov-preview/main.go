@@ -10,8 +10,11 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"net/url"
+	"os"
 	"time"
 
+	"github.com/bykclk/gocov/internal/auth"
 	blobmem "github.com/bykclk/gocov/internal/blobstore/memory"
 	"github.com/bykclk/gocov/internal/forge"
 	forgefake "github.com/bykclk/gocov/internal/forge/fake"
@@ -21,6 +24,24 @@ import (
 	storemem "github.com/bykclk/gocov/internal/store/memory"
 )
 
+// devAuth is a sign-in provider that "authorizes" by bouncing straight
+// back to the local callback, so the login, registration and workspace
+// settings pages are previewable without a real OAuth consumer. Enable
+// with GOCOV_PREVIEW_AUTH=1 (hosted mode; sign-in lands a member of the
+// seeded acme workspace with the unregistered "personal" also on offer).
+type devAuth struct{}
+
+func (devAuth) Name() string { return "bitbucket" }
+func (devAuth) AuthorizeURL(state, redirectURI string) string {
+	return redirectURI + "?state=" + url.QueryEscape(state) + "&code=dev"
+}
+func (devAuth) Identity(context.Context, string, string) (*auth.Identity, error) {
+	return &auth.Identity{
+		ForgeUUID: "{dev}", DisplayName: "Dev User", Email: "dev@example.com",
+		Workspaces: []string{"acme", "personal"},
+	}, nil
+}
+
 func main() {
 	ctx := context.Background()
 	st := storemem.New()
@@ -29,6 +50,11 @@ func main() {
 		DefaultBranch: "main", Gate: store.Gate{MinCoverage: pctPtr(70)},
 	}
 	if err := st.CreateRepo(ctx, repo); err != nil {
+		log.Fatal(err)
+	}
+	if err := st.CreateWorkspace(ctx, &store.Workspace{
+		Forge: "bitbucket", Prefix: "acme", Token: "ws-preview-token", DefaultBranch: "main",
+	}); err != nil {
 		log.Fatal(err)
 	}
 
@@ -58,11 +84,20 @@ func main() {
 		}
 	}
 
+	var auths []auth.Provider
+	hosted := false
+	if os.Getenv("GOCOV_PREVIEW_AUTH") == "1" {
+		auths = []auth.Provider{devAuth{}}
+		hosted = true
+		log.Println("preview auth on: any sign-in click lands as Dev User (member of acme)")
+	}
 	srv := server.New(server.Config{
 		Store: st, Blobs: blobmem.New(),
 		Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
 		Forges:  map[string]forge.Factory{"bitbucket": forgefake.New().Factory()},
 		BaseURL: "http://localhost:8099",
+		Auths:   auths,
+		Hosted:  hosted,
 	})
 	log.Println("preview on :8099")
 	log.Fatal(http.ListenAndServe(":8099", srv))

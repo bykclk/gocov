@@ -130,7 +130,8 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	minDiff := 70.0
 	w := &store.Workspace{
 		Forge: "bitbucket", Prefix: "acme", Token: "ws-tok", DefaultBranch: "development",
-		Gate: store.Gate{MinDiffCoverage: &minDiff},
+		ForgeCredentials: map[string]string{"username": "bot", "app_password": "pw"},
+		Gate:             store.Gate{MinDiffCoverage: &minDiff},
 	}
 	if err := st.CreateWorkspace(ctx, w); err != nil {
 		t.Fatal(err)
@@ -147,7 +148,8 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if got.Prefix != "acme" || got.DefaultBranch != "development" {
+		if got.Prefix != "acme" || got.DefaultBranch != "development" ||
+			!reflect.DeepEqual(got.ForgeCredentials, w.ForgeCredentials) {
 			t.Errorf("%s: %+v", name, got)
 		}
 		if got.Gate.MinDiffCoverage == nil || *got.Gate.MinDiffCoverage != 70 {
@@ -172,9 +174,10 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		t.Errorf("ListWorkspaces = %+v (err %v)", list, err)
 	}
 
-	// Update (rotation) and stale-token lookups.
+	// Update (rotation, credential clearing) and stale-token lookups.
 	w.Token = "ws-tok-2"
 	w.DefaultBranch = "trunk"
+	w.ForgeCredentials = nil
 	if err := st.UpdateWorkspace(ctx, w); err != nil {
 		t.Fatal(err)
 	}
@@ -184,6 +187,9 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	got, err := st.WorkspaceByPrefix(ctx, "acme")
 	if err != nil || got.Token != "ws-tok-2" || got.DefaultBranch != "trunk" {
 		t.Errorf("after update: %+v (err %v)", got, err)
+	}
+	if got.ForgeCredentials != nil {
+		t.Errorf("credentials not cleared: %v", got.ForgeCredentials)
 	}
 
 	// Delete; missing rows yield ErrNotFound.
@@ -329,7 +335,8 @@ func TestUserLifecycle(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 
-	u := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@example.com", DisplayName: "Jane Dev"}
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@example.com", DisplayName: "Jane Dev",
+		ForgeWorkspaces: []string{"acme", "personal"}}
 	if err := st.UpsertUser(ctx, u); err != nil {
 		t.Fatal(err)
 	}
@@ -337,8 +344,10 @@ func TestUserLifecycle(t *testing.T) {
 		t.Fatalf("UpsertUser did not fill ID/CreatedAt/LastLoginAt: %+v", u)
 	}
 
-	// A second login by the same forge account refreshes the same row (R1).
-	again := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@new.example", DisplayName: "Jane Renamed"}
+	// A second login by the same forge account refreshes the same row (R1),
+	// including the forge workspace snapshot (M3/D3).
+	again := &store.User{Forge: "bitbucket", ForgeUUID: "{u1}", Email: "jane@new.example", DisplayName: "Jane Renamed",
+		ForgeWorkspaces: []string{"acme", "newco"}}
 	if err := st.UpsertUser(ctx, again); err != nil {
 		t.Fatal(err)
 	}
@@ -351,6 +360,9 @@ func TestUserLifecycle(t *testing.T) {
 	}
 	if got.Email != "jane@new.example" || got.DisplayName != "Jane Renamed" {
 		t.Errorf("fields not refreshed: %+v", got)
+	}
+	if !reflect.DeepEqual(got.ForgeWorkspaces, []string{"acme", "newco"}) {
+		t.Errorf("forge workspaces not refreshed: %v", got.ForgeWorkspaces)
 	}
 	if got.LastLoginAt.Before(u.LastLoginAt) {
 		t.Errorf("last_login_at went backwards: %v < %v", got.LastLoginAt, u.LastLoginAt)
@@ -523,5 +535,45 @@ func TestWorkspaceMembership(t *testing.T) {
 	}
 	if err := st.SetUserWorkspaces(ctx, other.ID, nil); err != nil {
 		t.Fatalf("empty sync on fresh user: %v", err)
+	}
+}
+
+func TestRegisterWorkspace(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+
+	u := &store.User{Forge: "bitbucket", ForgeUUID: "{r1}", DisplayName: "Founder"}
+	if err := st.UpsertUser(ctx, u); err != nil {
+		t.Fatal(err)
+	}
+
+	// Registration creates the workspace and its first membership together.
+	w := &store.Workspace{Forge: "bitbucket", Prefix: "startup", Token: "reg-tok", DefaultBranch: "main"}
+	if err := st.RegisterWorkspace(ctx, w, u.ID); err != nil {
+		t.Fatal(err)
+	}
+	if w.ID == 0 || w.CreatedAt.IsZero() {
+		t.Fatalf("RegisterWorkspace did not fill ID/CreatedAt: %+v", w)
+	}
+	wss, err := st.ListWorkspacesForUser(ctx, u.ID)
+	if err != nil || len(wss) != 1 || wss[0].Prefix != "startup" {
+		t.Fatalf("memberships after registration = %v, %v", wss, err)
+	}
+
+	// A losing duplicate claim fails atomically: no workspace row, no
+	// membership row, and the winner's registration is untouched.
+	other := &store.User{Forge: "bitbucket", ForgeUUID: "{r2}", DisplayName: "Latecomer"}
+	if err := st.UpsertUser(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	dup := &store.Workspace{Forge: "bitbucket", Prefix: "startup", Token: "other-tok", DefaultBranch: "main"}
+	if err := st.RegisterWorkspace(ctx, dup, other.ID); err == nil {
+		t.Fatal("duplicate registration must fail")
+	}
+	if wss, _ := st.ListWorkspacesForUser(ctx, other.ID); len(wss) != 0 {
+		t.Errorf("failed registration left memberships: %v", wss)
+	}
+	if got, err := st.WorkspaceByPrefix(ctx, "startup"); err != nil || got.Token != "reg-tok" {
+		t.Errorf("winner's workspace disturbed: %+v (err %v)", got, err)
 	}
 }

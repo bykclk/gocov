@@ -2,6 +2,11 @@
 {{define "content"}}
 <h1>Repositories</h1>
 <p class="sub">{{len .Rows}} {{if eq (len .Rows) 1}}repo{{else}}repos{{end}}{{with .Query}} matching &ldquo;{{.}}&rdquo;{{end}}</p>
+{{if .Workspaces}}
+<p class="muted small">Your workspaces:
+{{range $i, $ws := .Workspaces}}{{if $i}} &middot; {{end}}<a class="mono" href="/workspaces/{{$ws.Prefix}}">{{$ws.Prefix}}</a>{{end}}
+&mdash; token, credentials &amp; gate settings</p>
+{{end}}
 <div class="toolbar">
   <input class="input" type="search" name="q" value="{{.Query}}" placeholder="Search repos&hellip;"
          hx-get="/" hx-trigger="input changed delay:300ms, search" hx-target="#repo-list"

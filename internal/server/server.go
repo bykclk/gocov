@@ -51,6 +51,11 @@ type Config struct {
 	// AllowedWorkspaces overrides the derived "tracked workspaces" set
 	// that gates who may sign in. Empty means derive from the store.
 	AllowedWorkspaces []string
+	// Hosted switches the instance to self-service mode (M3/D1): any
+	// forge account may sign in, and users without a tracked-workspace
+	// membership are routed to the registration page instead of being
+	// denied. False keeps today's private behavior exactly.
+	Hosted bool
 }
 
 // Server is the gocov HTTP server.
@@ -72,6 +77,7 @@ type Server struct {
 	auths             map[string]auth.Provider
 	authOrder         []auth.Provider
 	allowedWorkspaces []string
+	hosted            bool
 	// secureCookies marks auth cookies Secure when the public base URL is
 	// https (the UI is then served through TLS or a terminating proxy).
 	secureCookies bool
@@ -102,7 +108,8 @@ func New(cfg Config) *Server {
 	// Every page is its own template set sharing the layout and partials,
 	// so pages can define "content" without colliding.
 	pages := map[string]*template.Template{}
-	for _, name := range []string{"index.html", "repo.html", "upload.html", "source.html", "login.html"} {
+	for _, name := range []string{"index.html", "repo.html", "upload.html", "source.html", "login.html",
+		"register.html", "workspace.html", "setup.html"} {
 		pages[name] = template.Must(template.New(name).Funcs(funcs).ParseFS(templatesFS,
 			"templates/layout.html", "templates/partials.html", "templates/"+name))
 	}
@@ -122,6 +129,7 @@ func New(cfg Config) *Server {
 		auths:             map[string]auth.Provider{},
 		authOrder:         cfg.Auths,
 		allowedWorkspaces: cfg.AllowedWorkspaces,
+		hosted:            cfg.Hosted,
 		secureCookies:     strings.HasPrefix(cfg.BaseURL, "https://"),
 	}
 	for _, p := range cfg.Auths {
@@ -141,6 +149,14 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /oauth/{forge}/start", s.handleOAuthStart)
 	s.mux.HandleFunc("GET /oauth/{forge}/callback", s.handleOAuthCallback)
 	s.mux.HandleFunc("POST /logout", s.handleLogout)
+	s.mux.HandleFunc("GET /register", s.handleRegisterPage)
+	s.mux.HandleFunc("POST /register", s.handleRegister)
+	s.mux.HandleFunc("GET /workspaces/{prefix}", s.handleWorkspacePage)
+	s.mux.HandleFunc("POST /workspaces/{prefix}/rotate-token", s.handleWorkspaceRotate)
+	s.mux.HandleFunc("POST /workspaces/{prefix}/settings", s.handleWorkspaceSettings)
+	s.mux.HandleFunc("POST /workspaces/{prefix}/credentials", s.handleWorkspaceCredentials)
+	s.mux.HandleFunc("GET /workspaces/{prefix}/setup", s.handleWorkspaceSetup)
+	s.mux.HandleFunc("GET /workspaces/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
 	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
@@ -208,6 +224,21 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := t.ExecuteTemplate(w, "layout", data); err != nil {
 		s.log.Error("render template", "template", name, "err", err)
+	}
+}
+
+// renderPartial executes one named block of a page's template set without
+// the layout — the response bodies of htmx poll endpoints.
+func (s *Server) renderPartial(w http.ResponseWriter, page, block string, data any) {
+	t, ok := s.pages[page]
+	if !ok {
+		s.log.Error("unknown page template", "template", page)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := t.ExecuteTemplate(w, block, data); err != nil {
+		s.log.Error("render partial", "template", page, "block", block, "err", err)
 	}
 }
 

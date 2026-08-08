@@ -22,6 +22,9 @@
 // on requires — sign-in for the web UI, one login button per configured
 // forge; GOCOV_ALLOWED_WORKSPACES (comma-separated) optionally overrides
 // which workspace/org members may sign in.
+// GOCOV_MODE=hosted switches to self-service mode: any forge account may
+// sign in and register its own workspaces from the UI. The default
+// (private) keeps sign-in limited to members of tracked workspaces.
 package main
 
 import (
@@ -167,6 +170,20 @@ func serve() error {
 	if len(authProviders) == 0 {
 		log.Info("no sign-in provider configured; web UI stays open")
 	}
+	var hosted bool
+	switch mode := envOr("GOCOV_MODE", "private"); mode {
+	case "private":
+	case "hosted":
+		// Self-service registration is meaningless without a forge
+		// identity to derive claimable workspaces from; fail fast.
+		if len(authProviders) == 0 {
+			return fmt.Errorf("GOCOV_MODE=hosted requires a sign-in provider (set GOCOV_OAUTH_*_KEY/SECRET)")
+		}
+		hosted = true
+		log.Info("hosted mode: self-service workspace registration enabled")
+	default:
+		return fmt.Errorf("GOCOV_MODE=%q: want private or hosted", mode)
+	}
 	var allowedWorkspaces []string
 	for _, ws := range strings.Split(os.Getenv("GOCOV_ALLOWED_WORKSPACES"), ",") {
 		if ws = strings.TrimSpace(ws); ws != "" {
@@ -194,6 +211,7 @@ func serve() error {
 		DefaultForgeCredentials: defaultCreds,
 		Auths:                   authProviders,
 		AllowedWorkspaces:       allowedWorkspaces,
+		Hosted:                  hosted,
 	})
 
 	httpSrv := &http.Server{

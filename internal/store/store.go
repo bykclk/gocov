@@ -43,6 +43,10 @@ type Workspace struct {
 	// DefaultBranch is assigned to auto-created repos when the forge
 	// cannot be asked for the real one.
 	DefaultBranch string
+	// ForgeCredentials holds workspace-level forge secrets (same shape as
+	// Repo.ForgeCredentials). They rank between repo credentials and the
+	// global defaults. Nil or empty when not configured.
+	ForgeCredentials map[string]string
 	// Gate is copied to auto-created repos at registration time.
 	Gate      Gate
 	CreatedAt time.Time
@@ -99,8 +103,13 @@ type User struct {
 	ForgeUUID   string
 	Email       string
 	DisplayName string
-	CreatedAt   time.Time
-	LastLoginAt time.Time
+	// ForgeWorkspaces are the workspace slugs the forge reported at the
+	// last sign-in (M3/D3). OAuth tokens are discarded at login, so this
+	// snapshot is what the registration page renders from; it goes stale
+	// until the next login, never fresher.
+	ForgeWorkspaces []string
+	CreatedAt       time.Time
+	LastLoginAt     time.Time
 }
 
 // Session is a server-side web UI session. Only a hash of the session
@@ -145,6 +154,10 @@ type Store interface {
 	WorkspaceByPrefix(ctx context.Context, prefix string) (*Workspace, error)
 	WorkspaceByToken(ctx context.Context, token string) (*Workspace, error)
 	ListWorkspaces(ctx context.Context) ([]*Workspace, error)
+	// RegisterWorkspace creates the workspace and makes userID its first
+	// member atomically — self-service registration (M3) must never leave
+	// a workspace nobody can see.
+	RegisterWorkspace(ctx context.Context, w *Workspace, userID int64) error
 
 	// SetUserWorkspaces replaces a user's workspace memberships with the
 	// given set: memberships not listed are removed and listed ones are
@@ -156,8 +169,9 @@ type Store interface {
 	ListWorkspacesForUser(ctx context.Context, userID int64) ([]*Workspace, error)
 
 	// UpsertUser creates the user on first login or, when a row with the
-	// same forge+ForgeUUID exists, refreshes its email, display name and
-	// last-login time. ID, CreatedAt and LastLoginAt are set on u.
+	// same forge+ForgeUUID exists, refreshes its email, display name,
+	// forge workspaces and last-login time. ID, CreatedAt and LastLoginAt
+	// are set on u.
 	UpsertUser(ctx context.Context, u *User) error
 	UserByID(ctx context.Context, id int64) (*User, error)
 	ListUsers(ctx context.Context) ([]*User, error)

@@ -212,7 +212,7 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	// Forge client for build status, PR comment and diff coverage; nil when
 	// the repo has no credentials configured.
-	fg, fgErr := s.forgeFor(repo)
+	fg, fgErr := s.forgeFor(r.Context(), repo)
 
 	pathPrefix := strings.TrimSuffix(r.FormValue("path_prefix"), "/")
 	var diffResult *diffcov.Result
@@ -284,15 +284,42 @@ func (s *Server) handleUpload(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// forgeFor builds a forge client from the repo's stored credentials,
-// falling back to the server-wide default credentials for the repo's
-// forge. Returns (nil, nil) when neither is configured.
-func (s *Server) forgeFor(repo *store.Repo) (forge.Forge, error) {
+// forgeFor builds a forge client for the repo, resolving credentials
+// along the precedence chain repo > workspace (M3/D4) > server-wide
+// defaults. Returns (nil, nil) when none are configured.
+func (s *Server) forgeFor(ctx context.Context, repo *store.Repo) (forge.Forge, error) {
 	creds := repo.ForgeCredentials
+	if len(creds) == 0 {
+		creds = s.workspaceCreds(ctx, repo)
+	}
 	if len(creds) == 0 {
 		creds = s.defaultCreds[repo.Forge]
 	}
 	return s.forgeFromCreds(repo.Forge, creds)
+}
+
+// workspaceCreds returns the credentials of the workspace owning the
+// repo's slug prefix, nil when there are none. A lookup failure only
+// degrades to the global defaults — forge surfaces are best-effort
+// everywhere else too. The forge must match: prefixes are globally
+// unique, and a same-named workspace on another forge must not lend
+// its secrets.
+func (s *Server) workspaceCreds(ctx context.Context, repo *store.Repo) map[string]string {
+	prefix, _, ok := strings.Cut(repo.Slug, "/")
+	if !ok {
+		return nil
+	}
+	ws, err := s.store.WorkspaceByPrefix(ctx, prefix)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			s.log.Error("workspace credentials lookup", "repo", repo.Slug, "err", err)
+		}
+		return nil
+	}
+	if ws.Forge != repo.Forge {
+		return nil
+	}
+	return ws.ForgeCredentials
 }
 
 // forgeFromCreds builds a forge client for the named forge with the given
@@ -447,13 +474,17 @@ func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo 
 
 // autoCreateRepo registers a repo first seen through a workspace token.
 // The default branch is asked from the forge when a client can be built
-// (repo-less, so global credentials only), then falls back to the
+// (repo-less, so workspace credentials, then global), then falls back to the
 // workspace default and finally to "main". A forge that positively says
 // the repo does not exist aborts the registration (ErrRepoNotFound), so a
 // leaked workspace token cannot fill the dashboard with invented repos.
 func (s *Server) autoCreateRepo(ctx context.Context, ws *store.Workspace, slug string) (*store.Repo, error) {
 	branch := ""
-	if fg, err := s.forgeFromCreds(ws.Forge, s.defaultCreds[ws.Forge]); err == nil && fg != nil {
+	creds := ws.ForgeCredentials
+	if len(creds) == 0 {
+		creds = s.defaultCreds[ws.Forge]
+	}
+	if fg, err := s.forgeFromCreds(ws.Forge, creds); err == nil && fg != nil {
 		b, err := fg.GetDefaultBranch(ctx, slug)
 		switch {
 		case err == nil && b != "":
