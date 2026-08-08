@@ -1,0 +1,76 @@
+{{define "title"}}gocov — {{.Workspace.Prefix}} settings{{end}}
+{{define "content"}}
+<h1>Workspace <span class="mono">{{.Workspace.Prefix}}</span></h1>
+<p class="sub">{{.ForgeLabel}} &middot; <a href="/workspaces/{{.Workspace.Prefix}}/setup">Setup instructions</a></p>
+
+{{with .Notice}}<p class="notice">{{.}}</p>{{end}}
+{{with .Error}}<p class="notice fail">{{.}}</p>{{end}}
+
+{{if .NewToken}}
+<div class="card pad">
+  <h2>New upload token</h2>
+  <p><strong>Save it now — it is shown only this once.</strong> The previous token stopped
+  working the moment it was rotated.</p>
+  <p><code class="mono" id="ws-token">{{.NewToken}}</code>
+  <button class="btn" type="button" data-copy="#ws-token">Copy</button></p>
+</div>
+{{end}}
+
+<div class="card pad">
+  <h2>Upload token</h2>
+  <p class="sub">Authorizes uploads for every repo under <code>{{.Workspace.Prefix}}/</code>.
+  It was shown once at registration; if it is lost or leaked, rotate it.</p>
+  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/rotate-token"
+        data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
+    <button class="btn" type="submit">Rotate token</button>
+  </form>
+</div>
+
+<div class="card pad">
+  <h2>Defaults &amp; coverage gate</h2>
+  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/settings">
+    <p><label>Default branch<br>
+      <input class="input" type="text" name="default_branch" value="{{.Workspace.DefaultBranch}}"></label></p>
+    <p><label>Min total coverage %<br>
+      <input class="input" type="number" name="min_coverage" min="0" max="100" step="0.1"
+             value="{{with .Workspace.Gate.MinCoverage}}{{.}}{{end}}" placeholder="off"></label></p>
+    <p><label>Min diff coverage %<br>
+      <input class="input" type="number" name="min_diff_coverage" min="0" max="100" step="0.1"
+             value="{{with .Workspace.Gate.MinDiffCoverage}}{{.}}{{end}}" placeholder="off"></label></p>
+    <p><label>Max coverage drop %<br>
+      <input class="input" type="number" name="max_coverage_drop" min="0" max="100" step="0.1"
+             value="{{with .Workspace.Gate.MaxCoverageDrop}}{{.}}{{end}}" placeholder="off"></label></p>
+    <p class="muted small">Branch and gate defaults apply to repos registered from now on;
+    leave a gate field empty to disable that rule.</p>
+    <button class="btn primary" type="submit">Save</button>
+  </form>
+</div>
+
+<div class="card pad">
+  <h2>Forge credentials</h2>
+  <p class="sub">A {{.ForgeLabel}} bot credential used for build statuses, PR comments and
+  insights on this workspace&rsquo;s repos when a repo has none of its own.
+  {{if .CredsConfigured}}<span class="chip pass">configured &#10003;</span>
+  {{else}}<span class="chip plain">not configured</span>{{end}}</p>
+  <form method="post" action="/workspaces/{{.Workspace.Prefix}}/credentials">
+    {{if eq .Workspace.Forge "github"}}
+    <p><label>Access token<br>
+      <input class="input" type="password" name="token" autocomplete="new-password"
+             placeholder="{{if .CredsConfigured}}enter a new token to replace{{else}}ghp_&hellip;{{end}}"></label></p>
+    {{else}}
+    <p><label>Username<br>
+      <input class="input" type="text" name="username" autocomplete="off"></label></p>
+    <p><label>App password / API token<br>
+      <input class="input" type="password" name="app_password" autocomplete="new-password"
+             placeholder="{{if .CredsConfigured}}enter a new value to replace{{end}}"></label></p>
+    {{end}}
+    <p class="muted small">Stored values are never shown again — entering new ones replaces them.</p>
+    <button class="btn primary" type="submit" name="action" value="save">
+      {{if .CredsConfigured}}Replace{{else}}Save{{end}}</button>
+    {{if .CredsConfigured}}
+    <button class="btn" type="submit" name="action" value="clear"
+            formnovalidate>Clear</button>
+    {{end}}
+  </form>
+</div>
+{{end}}

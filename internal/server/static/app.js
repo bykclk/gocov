@@ -14,6 +14,13 @@ document.querySelectorAll("[data-dismiss]").forEach((btn) => {
   });
 });
 
+// Destructive-action confirmation: <form data-confirm="message"> asks
+// before submitting (e.g. workspace token rotation).
+document.addEventListener("submit", (e) => {
+  const msg = e.target.getAttribute && e.target.getAttribute("data-confirm");
+  if (msg && !window.confirm(msg)) e.preventDefault();
+});
+
 // Copy-to-clipboard: <button data-copy="#selector">Copy</button> copies the
 // value/text of the referenced element. Falls back to select+execCommand on
 // plain-http deployments where the Clipboard API is unavailable.

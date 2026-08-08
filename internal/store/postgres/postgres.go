@@ -199,26 +199,62 @@ func marshalCreds(creds map[string]string) ([]byte, error) {
 	return json.Marshal(creds)
 }
 
-const workspaceCols = `id, forge, prefix, token, default_branch,
+const workspaceCols = `id, forge, prefix, token, default_branch, COALESCE(forge_credentials, 'null'::jsonb),
 	min_coverage, min_diff_coverage, max_coverage_drop, created_at`
 
 func (s *Store) CreateWorkspace(ctx context.Context, w *store.Workspace) error {
-	return s.pool.QueryRow(ctx, `
-		INSERT INTO workspaces (forge, prefix, token, default_branch,
+	return s.createWorkspace(ctx, s.pool, w)
+}
+
+// execer is the subset of pgx querying shared by pools and transactions.
+type execer interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+func (s *Store) createWorkspace(ctx context.Context, db execer, w *store.Workspace) error {
+	creds, err := marshalCreds(w.ForgeCredentials)
+	if err != nil {
+		return err
+	}
+	return db.QueryRow(ctx, `
+		INSERT INTO workspaces (forge, prefix, token, default_branch, forge_credentials,
 			min_coverage, min_diff_coverage, max_coverage_drop)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at`,
-		w.Forge, w.Prefix, w.Token, w.DefaultBranch,
+		w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop,
 	).Scan(&w.ID, &w.CreatedAt)
 }
 
+func (s *Store) RegisterWorkspace(ctx context.Context, w *store.Workspace, userID int64) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
+
+	if err := s.createWorkspace(ctx, tx, w); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO workspace_members (workspace_id, user_id) VALUES ($1, $2)`,
+		w.ID, userID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 func (s *Store) UpdateWorkspace(ctx context.Context, w *store.Workspace) error {
+	creds, err := marshalCreds(w.ForgeCredentials)
+	if err != nil {
+		return err
+	}
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE workspaces SET forge = $2, prefix = $3, token = $4, default_branch = $5,
-			min_coverage = $6, min_diff_coverage = $7, max_coverage_drop = $8
+			forge_credentials = $6,
+			min_coverage = $7, min_diff_coverage = $8, max_coverage_drop = $9
 		WHERE id = $1`,
-		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch,
+		w.ID, w.Forge, w.Prefix, w.Token, w.DefaultBranch, creds,
 		w.Gate.MinCoverage, w.Gate.MinDiffCoverage, w.Gate.MaxCoverageDrop)
 	if err != nil {
 		return err
@@ -269,13 +305,19 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) 
 
 func (s *Store) scanWorkspace(row rowScanner) (*store.Workspace, error) {
 	var w store.Workspace
-	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch,
+	var creds []byte
+	err := row.Scan(&w.ID, &w.Forge, &w.Prefix, &w.Token, &w.DefaultBranch, &creds,
 		&w.Gate.MinCoverage, &w.Gate.MinDiffCoverage, &w.Gate.MaxCoverageDrop, &w.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if len(creds) > 0 && string(creds) != "null" {
+		if err := json.Unmarshal(creds, &w.ForgeCredentials); err != nil {
+			return nil, fmt.Errorf("workspace %s: bad forge_credentials: %w", w.Prefix, err)
+		}
 	}
 	return &w, nil
 }
@@ -309,6 +351,7 @@ func (s *Store) SetUserWorkspaces(ctx context.Context, userID int64, workspaceID
 func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*store.Workspace, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT w.id, w.forge, w.prefix, w.token, w.default_branch,
+			COALESCE(w.forge_credentials, 'null'::jsonb),
 			w.min_coverage, w.min_diff_coverage, w.max_coverage_drop, w.created_at
 		FROM workspaces w
 		JOIN workspace_members m ON m.workspace_id = w.id
@@ -329,19 +372,35 @@ func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*sto
 	return out, rows.Err()
 }
 
-const userCols = `id, forge, forge_uuid, email, display_name, created_at, last_login_at`
+const userCols = `id, forge, forge_uuid, email, display_name,
+	COALESCE(forge_workspaces, 'null'::jsonb), created_at, last_login_at`
 
 func (s *Store) UpsertUser(ctx context.Context, u *store.User) error {
+	// The forge workspace snapshot is replaced wholesale: the identity
+	// fetch either succeeded as a whole or failed the login, so an empty
+	// list here is the forge's answer, not a partial read.
+	wss, err := marshalStrings(u.ForgeWorkspaces)
+	if err != nil {
+		return err
+	}
 	return s.pool.QueryRow(ctx, `
-		INSERT INTO users (forge, forge_uuid, email, display_name)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO users (forge, forge_uuid, email, display_name, forge_workspaces)
+		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (forge, forge_uuid) DO UPDATE
 			SET email = EXCLUDED.email,
 				display_name = EXCLUDED.display_name,
+				forge_workspaces = EXCLUDED.forge_workspaces,
 				last_login_at = now()
 		RETURNING id, created_at, last_login_at`,
-		u.Forge, u.ForgeUUID, u.Email, u.DisplayName,
+		u.Forge, u.ForgeUUID, u.Email, u.DisplayName, wss,
 	).Scan(&u.ID, &u.CreatedAt, &u.LastLoginAt)
+}
+
+func marshalStrings(ss []string) ([]byte, error) {
+	if len(ss) == 0 {
+		return nil, nil
+	}
+	return json.Marshal(ss)
 }
 
 func (s *Store) UserByID(ctx context.Context, id int64) (*store.User, error) {
@@ -380,13 +439,19 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 
 func (s *Store) scanUser(row rowScanner) (*store.User, error) {
 	var u store.User
+	var wss []byte
 	err := row.Scan(&u.ID, &u.Forge, &u.ForgeUUID, &u.Email, &u.DisplayName,
-		&u.CreatedAt, &u.LastLoginAt)
+		&wss, &u.CreatedAt, &u.LastLoginAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, store.ErrNotFound
 	}
 	if err != nil {
 		return nil, err
+	}
+	if len(wss) > 0 && string(wss) != "null" {
+		if err := json.Unmarshal(wss, &u.ForgeWorkspaces); err != nil {
+			return nil, fmt.Errorf("user %d: bad forge_workspaces: %w", u.ID, err)
+		}
 	}
 	return &u, nil
 }
@@ -404,7 +469,8 @@ func (s *Store) UserBySession(ctx context.Context, tokenHash string) (*store.Use
 	// Expired sessions are simply never matched; rows are cleaned up lazily
 	// when the same token is presented again.
 	u, err := s.scanUser(s.pool.QueryRow(ctx, `
-		SELECT u.id, u.forge, u.forge_uuid, u.email, u.display_name, u.created_at, u.last_login_at
+		SELECT u.id, u.forge, u.forge_uuid, u.email, u.display_name,
+			COALESCE(u.forge_workspaces, 'null'::jsonb), u.created_at, u.last_login_at
 		FROM users u JOIN sessions s ON s.user_id = u.id
 		WHERE s.token_hash = $1 AND s.expires_at > now()`,
 		tokenHash))

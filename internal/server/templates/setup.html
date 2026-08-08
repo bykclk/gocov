@@ -1,0 +1,64 @@
+{{define "title"}}gocov — {{.Workspace.Prefix}} setup{{end}}
+{{define "content"}}
+<h1>Get coverage flowing</h1>
+<p class="sub">Workspace <code>{{.Workspace.Prefix}}</code> on {{.ForgeLabel}} &middot;
+<a href="/workspaces/{{.Workspace.Prefix}}">Settings</a></p>
+
+<div class="card pad">
+  <h2>1. Set the CI variables</h2>
+  {{if eq .Workspace.Forge "github"}}
+  <p class="sub">In your GitHub org or repo: <em>Settings &rarr; Secrets and variables &rarr;
+  Actions</em>. Add <code>GOCOV_SERVER</code> as a variable and <code>GOCOV_TOKEN</code>
+  as a secret:</p>
+  {{else}}
+  <p class="sub">In Bitbucket: <em>Workspace settings &rarr; Workspace variables</em>.
+  Add both, marking <code>GOCOV_TOKEN</code> as secured:</p>
+  {{end}}
+  <pre><code id="setup-vars">GOCOV_SERVER={{.BaseURL}}
+GOCOV_TOKEN={{.Workspace.Token}}</code></pre>
+  <p><button class="btn" type="button" data-copy="#setup-vars">Copy</button></p>
+</div>
+
+<div class="card pad">
+  <h2>2. Add the upload step</h2>
+  {{if eq .Workspace.Forge "github"}}
+  <p class="sub">In your GitHub Actions workflow, after the tests:</p>
+  <pre><code id="setup-snippet">- run: go test ./... -covermode=atomic -coverprofile=coverage.out
+- run: go run github.com/bykclk/gocov/cmd/gocov@latest upload coverage.out
+  env:
+    GOCOV_SERVER: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}
+    GOCOV_TOKEN: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}</code></pre>
+  {{else}}
+  <p class="sub">In <code>bitbucket-pipelines.yml</code>, after the tests:</p>
+  <pre><code id="setup-snippet">- step:
+    script:
+      - go test ./... -covermode=atomic -coverprofile=coverage.out
+      - go run github.com/bykclk/gocov/cmd/gocov@latest upload coverage.out</code></pre>
+  {{end}}
+  <p><button class="btn" type="button" data-copy="#setup-snippet">Copy</button>
+  <span class="muted small">Commit, branch, repo and PR are auto-detected; other languages
+  can upload lcov, JaCoCo or Cobertura with <code>-format</code>.</span></p>
+</div>
+
+<div class="card pad">
+  <h2>3. Push a commit</h2>
+  <p class="sub">Repos under <code>{{.Workspace.Prefix}}/</code> register themselves on
+  their first upload — nothing else to configure.</p>
+  {{template "setup-status" .}}
+</div>
+{{end}}
+
+{{define "setup-status"}}
+{{if .Repos}}
+<div class="notice" id="setup-status">
+  <strong>First upload received!</strong> Coverage is live:
+  {{range $i, $repo := .Repos}}{{if $i}}, {{end}}<a class="mono" href="/repos/{{$repo.Slug}}">{{$repo.Slug}}</a>{{end}}
+</div>
+{{else}}
+<div class="notice" id="setup-status"
+     hx-get="/workspaces/{{.Workspace.Prefix}}/setup/status"
+     hx-trigger="every 3s" hx-swap="outerHTML">
+  Waiting for your first upload&hellip; this page updates by itself.
+</div>
+{{end}}
+{{end}}

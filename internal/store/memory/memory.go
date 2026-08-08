@@ -141,6 +141,10 @@ func (s *Store) ListRepos(_ context.Context) ([]*store.Repo, error) {
 func (s *Store) CreateWorkspace(_ context.Context, w *store.Workspace) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.createWorkspaceLocked(w)
+}
+
+func (s *Store) createWorkspaceLocked(w *store.Workspace) error {
 	for _, existing := range s.workspaces {
 		if existing.Prefix == w.Prefix || existing.Token == w.Token {
 			return fmt.Errorf("memory: workspace prefix or token already exists")
@@ -153,6 +157,22 @@ func (s *Store) CreateWorkspace(_ context.Context, w *store.Workspace) error {
 	}
 	cp := *w
 	s.workspaces[w.ID] = &cp
+	return nil
+}
+
+func (s *Store) RegisterWorkspace(_ context.Context, w *store.Workspace, userID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.users[userID]; !ok {
+		return fmt.Errorf("memory: user %d does not exist", userID)
+	}
+	if err := s.createWorkspaceLocked(w); err != nil {
+		return err
+	}
+	if s.members[userID] == nil {
+		s.members[userID] = map[int64]bool{}
+	}
+	s.members[userID][w.ID] = true
 	return nil
 }
 
@@ -257,6 +277,7 @@ func (s *Store) UpsertUser(_ context.Context, u *store.User) error {
 		if existing.Forge == u.Forge && existing.ForgeUUID == u.ForgeUUID {
 			existing.Email = u.Email
 			existing.DisplayName = u.DisplayName
+			existing.ForgeWorkspaces = u.ForgeWorkspaces
 			existing.LastLoginAt = now
 			*u = *existing
 			return nil

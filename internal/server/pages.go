@@ -71,6 +71,22 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "scoping repos", err)
 		return
 	}
+	// A hosted user without a single workspace membership would see a
+	// permanently empty dashboard; registration is the only useful page
+	// for them (M3/R1).
+	if s.hosted && scope.scoped && len(scope.prefixes) == 0 && currentUser(r) != nil {
+		http.Redirect(w, r, "/register", http.StatusFound)
+		return
+	}
+	// The settings pages hang off the index as a workspace strip — the
+	// only workspace navigation until the P1 switcher.
+	var workspaces []*store.Workspace
+	if u := currentUser(r); u != nil {
+		if workspaces, err = s.store.ListWorkspacesForUser(r.Context(), u.ID); err != nil {
+			s.internalError(w, "listing memberships", err)
+			return
+		}
+	}
 	rows := make([]indexRow, 0, len(repos))
 	for _, repo := range repos {
 		if !scope.allows(repo.Slug) {
@@ -97,7 +113,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		}
 		rows = append(rows, row)
 	}
-	s.render(w, r, "index.html", map[string]any{"Rows": rows, "Query": query})
+	s.render(w, r, "index.html", map[string]any{"Rows": rows, "Query": query, "Workspaces": workspaces})
 }
 
 // gateSummary renders the repo's gate rules for the stats card.

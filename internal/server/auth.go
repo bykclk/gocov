@@ -134,7 +134,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, sanitizeNext(r.FormValue("next")), http.StatusFound)
 		return
 	}
-	denied := r.FormValue("denied") == "1"
+	// The denial page is private-mode only (M3/D1): a hosted instance
+	// never denies a sign-in, so the flag — and the tracked-workspace
+	// disclosure below — must not be reachable by URL either.
+	denied := r.FormValue("denied") == "1" && !s.hosted
 	if denied {
 		w.WriteHeader(http.StatusForbidden)
 	}
@@ -156,6 +159,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		"Next":       sanitizeNext(r.FormValue("next")),
 		"Workspaces": workspaces,
 		"Providers":  providers,
+		"Hosted":     s.hosted,
 	})
 }
 
@@ -226,27 +230,32 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	allowed, err := s.allowedWorkspaceSet(r)
-	if err != nil {
-		s.internalError(w, "deriving allowed workspaces", err)
-		return
-	}
-	member := false
-	for _, ws := range id.Workspaces {
-		if allowed[ws] {
-			member = true
-			break
+	// The membership gate is private-mode only (M3/D1); a hosted instance
+	// admits any forge account and routes the workspace question to the
+	// registration page instead.
+	if !s.hosted {
+		allowed, err := s.allowedWorkspaceSet(r)
+		if err != nil {
+			s.internalError(w, "deriving allowed workspaces", err)
+			return
 		}
-	}
-	if !member {
-		// No user row, no session (R3): denial must leave nothing behind.
-		// Both sides of the failed intersection are logged so an operator
-		// can see at a glance whether the fix is a missing registration,
-		// a stale GOCOV_ALLOWED_WORKSPACES or a slug mismatch.
-		s.log.Warn("sign-in denied", "forge", provider.Name(), "account", id.DisplayName, "email", id.Email,
-			"member_of", id.Workspaces, "allowed", sortedKeys(allowed))
-		http.Redirect(w, r, "/login?denied=1", http.StatusFound)
-		return
+		member := false
+		for _, ws := range id.Workspaces {
+			if allowed[ws] {
+				member = true
+				break
+			}
+		}
+		if !member {
+			// No user row, no session (R3): denial must leave nothing behind.
+			// Both sides of the failed intersection are logged so an operator
+			// can see at a glance whether the fix is a missing registration,
+			// a stale GOCOV_ALLOWED_WORKSPACES or a slug mismatch.
+			s.log.Warn("sign-in denied", "forge", provider.Name(), "account", id.DisplayName, "email", id.Email,
+				"member_of", id.Workspaces, "allowed", sortedKeys(allowed))
+			http.Redirect(w, r, "/login?denied=1", http.StatusFound)
+			return
+		}
 	}
 
 	u := &store.User{
@@ -254,14 +263,23 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		ForgeUUID:   id.ForgeUUID,
 		Email:       id.Email,
 		DisplayName: id.DisplayName,
+		// The workspace snapshot the registration page renders from
+		// (M3/D3); refreshed on every login, stale in between.
+		ForgeWorkspaces: id.Workspaces,
 	}
 	if err := s.store.UpsertUser(r.Context(), u); err != nil {
 		s.internalError(w, "provisioning user", err)
 		return
 	}
-	if err := s.syncMemberships(r.Context(), u, id.Workspaces); err != nil {
+	memberships, err := s.syncMemberships(r.Context(), u, id.Workspaces)
+	if err != nil {
 		s.internalError(w, "syncing workspace memberships", err)
 		return
+	}
+	// A hosted user who belongs to no tracked workspace has nothing to see
+	// yet — land them on registration rather than an empty dashboard.
+	if s.hosted && memberships == 0 {
+		next = "/register"
 	}
 	token, err := newState() // same entropy requirement: 256 random bits
 	if err != nil {
@@ -343,15 +361,16 @@ func (s *Server) allowedWorkspaceSet(r *http.Request) (map[string]bool, error) {
 // belongs to. It runs on every sign-in with full-sync semantics, so a
 // membership the forge no longer reports is dropped at the next login.
 // Matching is per provider (forge + prefix), so two forges sharing a prefix
-// stay distinct tenants.
-func (s *Server) syncMemberships(ctx context.Context, u *store.User, forgeWorkspaces []string) error {
+// stay distinct tenants. Returns how many memberships the user ends up
+// with, which decides a hosted user's post-login landing page.
+func (s *Server) syncMemberships(ctx context.Context, u *store.User, forgeWorkspaces []string) (int, error) {
 	forgeSet := make(map[string]bool, len(forgeWorkspaces))
 	for _, ws := range forgeWorkspaces {
 		forgeSet[ws] = true
 	}
 	tracked, err := s.store.ListWorkspaces(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var ids []int64
 	for _, ws := range tracked {
@@ -359,7 +378,7 @@ func (s *Server) syncMemberships(ctx context.Context, u *store.User, forgeWorksp
 			ids = append(ids, ws.ID)
 		}
 	}
-	return s.store.SetUserWorkspaces(ctx, u.ID, ids)
+	return len(ids), s.store.SetUserWorkspaces(ctx, u.ID, ids)
 }
 
 // repoScope captures which repos a request may see (M2/R3). When scoped is

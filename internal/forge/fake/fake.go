@@ -61,6 +61,7 @@ type Forge struct {
 	FileErr   error
 	ReportErr error // returned by PublishReport
 
+	FactoryCreds       []map[string]string // credentials each Factory() call received
 	StatusCalls        []StatusCall
 	CommentCalls       []CommentCall
 	UpdateCalls        []UpdateCall
@@ -89,6 +90,9 @@ func New() *Forge { return &Forge{} }
 // credentials it was invoked with.
 func (f *Forge) Factory() forge.Factory {
 	return func(creds map[string]string) (forge.Forge, error) {
+		f.mu.Lock()
+		f.FactoryCreds = append(f.FactoryCreds, creds)
+		f.mu.Unlock()
 		return f, nil
 	}
 }

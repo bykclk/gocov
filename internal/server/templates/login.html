@@ -14,8 +14,13 @@
     {{else if .Failed}}
     <p class="notice fail">Sign-in did not complete. Please try again.</p>
     {{end}}
+    {{if .Hosted}}
+    <p class="sub">Sign in to get started &mdash; you can register your workspace right after.
+    No separate password is needed.</p>
+    {{else}}
     <p class="sub">Use the account that is a member of this instance&rsquo;s workspaces.
     No separate password is needed.</p>
+    {{end}}
     {{range .Providers}}
     <a class="btn primary login-btn" href="/oauth/{{.Name}}/start?next={{$.Next}}">Sign in with {{.Label}}</a>
     {{end}}
