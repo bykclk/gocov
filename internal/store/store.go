@@ -146,6 +146,15 @@ type Store interface {
 	WorkspaceByToken(ctx context.Context, token string) (*Workspace, error)
 	ListWorkspaces(ctx context.Context) ([]*Workspace, error)
 
+	// SetUserWorkspaces replaces a user's workspace memberships with the
+	// given set: memberships not listed are removed and listed ones are
+	// added, so re-running it with the same IDs is a no-op. Called at login
+	// to mirror the user's current forge membership (M2).
+	SetUserWorkspaces(ctx context.Context, userID int64, workspaceIDs []int64) error
+	// ListWorkspacesForUser returns the workspaces the user is a member of,
+	// ordered by prefix.
+	ListWorkspacesForUser(ctx context.Context, userID int64) ([]*Workspace, error)
+
 	// UpsertUser creates the user on first login or, when a row with the
 	// same forge+ForgeUUID exists, refreshes its email, display name and
 	// last-login time. ID, CreatedAt and LastLoginAt are set on u.

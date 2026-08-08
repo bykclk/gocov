@@ -65,6 +65,13 @@ func (s *Server) handleSource(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "loading repo for upload", err)
 		return
 	}
+	if ok, err := s.canView(r, repo.Slug); err != nil {
+		s.internalError(w, "checking access", err)
+		return
+	} else if !ok {
+		http.NotFound(w, r)
+		return
+	}
 
 	source, unavailable := s.fetchSource(r, repo, upload, file)
 	data := map[string]any{

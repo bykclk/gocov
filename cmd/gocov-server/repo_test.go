@@ -58,6 +58,55 @@ func TestRepoAdd(t *testing.T) {
 	}
 }
 
+// TestRepoAddCreatesWorkspace covers D6: `repo add` for a prefix with no
+// workspace row creates one, copying the repo's forge and default branch, so
+// every repo belongs to a workspace going forward.
+func TestRepoAddCreatesWorkspace(t *testing.T) {
+	st := storemem.New()
+	ctx := context.Background()
+
+	out, err := runRepoCmd(t, st, "add", "-slug", "fresh/one", "-forge", "github",
+		"-default-branch", "trunk")
+	if err != nil {
+		t.Fatalf("repo add: %v", err)
+	}
+	if !strings.Contains(out, "workspace fresh created") {
+		t.Errorf("expected workspace-created notice, got: %s", out)
+	}
+	ws, err := st.WorkspaceByPrefix(ctx, "fresh")
+	if err != nil {
+		t.Fatalf("workspace not created: %v", err)
+	}
+	if ws.Forge != "github" || ws.DefaultBranch != "trunk" {
+		t.Errorf("workspace = %+v, want forge=github branch=trunk", ws)
+	}
+	if !tokenRe.MatchString(strings.ReplaceAll(out, "workspace upload token:", "upload token:")) {
+		t.Errorf("workspace token not printed in 24-byte hex form: %s", out)
+	}
+
+	// A second repo under the same prefix must not create or error on a
+	// duplicate workspace.
+	out, err = runRepoCmd(t, st, "add", "-slug", "fresh/two")
+	if err != nil {
+		t.Fatalf("second repo add: %v", err)
+	}
+	if strings.Contains(out, "workspace fresh created") {
+		t.Errorf("workspace re-created for existing prefix: %s", out)
+	}
+
+	// A repo added under a prefix that already has a workspace leaves it be.
+	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "known", Token: "known-tok"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err = runRepoCmd(t, st, "add", "-slug", "known/repo")
+	if err != nil {
+		t.Fatalf("repo add under known prefix: %v", err)
+	}
+	if strings.Contains(out, "workspace known created") {
+		t.Errorf("existing workspace was recreated: %s", out)
+	}
+}
+
 func TestRepoAddGitHub(t *testing.T) {
 	st := storemem.New()
 	token := mustAdd(t, st, "-slug", "acme/widgets", "-forge", "github", "-gh-token", "ghp_x")

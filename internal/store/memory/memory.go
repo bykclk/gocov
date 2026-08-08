@@ -24,6 +24,7 @@ type Store struct {
 	workspaces map[int64]*store.Workspace
 	users      map[int64]*store.User
 	sessions   map[string]*store.Session // keyed by token hash
+	members    map[int64]map[int64]bool  // userID -> set of workspace IDs
 }
 
 // New returns an empty in-memory store.
@@ -35,6 +36,7 @@ func New() *Store {
 		workspaces: map[int64]*store.Workspace{},
 		users:      map[int64]*store.User{},
 		sessions:   map[string]*store.Session{},
+		members:    map[int64]map[int64]bool{},
 	}
 }
 
@@ -176,6 +178,9 @@ func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
 		return store.ErrNotFound
 	}
 	delete(s.workspaces, id)
+	for _, ws := range s.members {
+		delete(ws, id)
+	}
 	return nil
 }
 
@@ -210,6 +215,35 @@ func (s *Store) ListWorkspaces(_ context.Context) ([]*store.Workspace, error) {
 	for _, w := range s.workspaces {
 		cp := *w
 		out = append(out, &cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
+	return out, nil
+}
+
+func (s *Store) SetUserWorkspaces(_ context.Context, userID int64, workspaceIDs []int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(workspaceIDs) == 0 {
+		delete(s.members, userID)
+		return nil
+	}
+	set := make(map[int64]bool, len(workspaceIDs))
+	for _, id := range workspaceIDs {
+		set[id] = true
+	}
+	s.members[userID] = set
+	return nil
+}
+
+func (s *Store) ListWorkspacesForUser(_ context.Context, userID int64) ([]*store.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*store.Workspace, 0, len(s.members[userID]))
+	for wsID := range s.members[userID] {
+		if w, ok := s.workspaces[wsID]; ok {
+			cp := *w
+			out = append(out, &cp)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Prefix < out[j].Prefix })
 	return out, nil
@@ -267,6 +301,7 @@ func (s *Store) DeleteUser(_ context.Context, id int64) error {
 		return store.ErrNotFound
 	}
 	delete(s.users, id)
+	delete(s.members, id)
 	for hash, sess := range s.sessions {
 		if sess.UserID == id {
 			delete(s.sessions, hash)

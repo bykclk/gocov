@@ -66,8 +66,16 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "listing repos", err)
 		return
 	}
+	scope, err := s.userScope(r)
+	if err != nil {
+		s.internalError(w, "scoping repos", err)
+		return
+	}
 	rows := make([]indexRow, 0, len(repos))
 	for _, repo := range repos {
+		if !scope.allows(repo.Slug) {
+			continue
+		}
 		if query != "" && !strings.Contains(strings.ToLower(repo.Slug), strings.ToLower(query)) {
 			continue
 		}
@@ -118,6 +126,13 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.internalError(w, "loading repo", err)
+		return
+	}
+	if ok, err := s.canView(r, repo.Slug); err != nil {
+		s.internalError(w, "checking access", err)
+		return
+	} else if !ok {
+		http.NotFound(w, r)
 		return
 	}
 
@@ -283,6 +298,13 @@ func (s *Server) handleUploadPage(w http.ResponseWriter, r *http.Request) {
 	repo, err := s.store.RepoByID(r.Context(), upload.RepoID)
 	if err != nil {
 		s.internalError(w, "loading repo for upload", err)
+		return
+	}
+	if ok, err := s.canView(r, repo.Slug); err != nil {
+		s.internalError(w, "checking access", err)
+		return
+	} else if !ok {
+		http.NotFound(w, r)
 		return
 	}
 	rows := make([]uploadFileRow, 0, len(files))

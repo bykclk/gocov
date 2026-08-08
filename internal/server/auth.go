@@ -259,6 +259,10 @@ func (s *Server) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		s.internalError(w, "provisioning user", err)
 		return
 	}
+	if err := s.syncMemberships(r.Context(), u, id.Workspaces); err != nil {
+		s.internalError(w, "syncing workspace memberships", err)
+		return
+	}
 	token, err := newState() // same entropy requirement: 256 random bits
 	if err != nil {
 		s.internalError(w, "generating session token", err)
@@ -332,6 +336,80 @@ func (s *Server) allowedWorkspaceSet(r *http.Request) (map[string]bool, error) {
 		}
 	}
 	return set, nil
+}
+
+// syncMemberships persists the user's workspace memberships (M2/D2): the
+// tracked workspaces on this forge whose prefix the forge reports the user
+// belongs to. It runs on every sign-in with full-sync semantics, so a
+// membership the forge no longer reports is dropped at the next login.
+// Matching is per provider (forge + prefix), so two forges sharing a prefix
+// stay distinct tenants.
+func (s *Server) syncMemberships(ctx context.Context, u *store.User, forgeWorkspaces []string) error {
+	forgeSet := make(map[string]bool, len(forgeWorkspaces))
+	for _, ws := range forgeWorkspaces {
+		forgeSet[ws] = true
+	}
+	tracked, err := s.store.ListWorkspaces(ctx)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for _, ws := range tracked {
+		if ws.Forge == u.Forge && forgeSet[ws.Prefix] {
+			ids = append(ids, ws.ID)
+		}
+	}
+	return s.store.SetUserWorkspaces(ctx, u.ID, ids)
+}
+
+// repoScope captures which repos a request may see (M2/R3). When scoped is
+// false the instance runs in open mode (D5) and every repo is visible;
+// otherwise a repo is visible only when its workspace prefix is a member
+// prefix.
+type repoScope struct {
+	scoped   bool
+	prefixes map[string]bool
+}
+
+// allows reports whether a namespaced repo slug falls within the scope.
+func (rs repoScope) allows(slug string) bool {
+	if !rs.scoped {
+		return true
+	}
+	prefix, _, _ := strings.Cut(slug, "/")
+	return rs.prefixes[prefix]
+}
+
+// userScope resolves the request user's workspace membership into a scope.
+// Auth off → unscoped, so an open-mode instance behaves exactly as before
+// M2. Auth on → the user's workspace prefixes; a missing user (which should
+// not occur behind requireAuth) yields a deny-all scope rather than an open
+// one.
+func (s *Server) userScope(r *http.Request) (repoScope, error) {
+	if !s.authEnabled() {
+		return repoScope{scoped: false}, nil
+	}
+	prefixes := map[string]bool{}
+	if u := currentUser(r); u != nil {
+		wss, err := s.store.ListWorkspacesForUser(r.Context(), u.ID)
+		if err != nil {
+			return repoScope{}, err
+		}
+		for _, ws := range wss {
+			prefixes[ws.Prefix] = true
+		}
+	}
+	return repoScope{scoped: true, prefixes: prefixes}, nil
+}
+
+// canView reports whether the request may see the given repo slug. Callers
+// that fail the check 404 (D3: a non-member must not learn a repo exists).
+func (s *Server) canView(r *http.Request, slug string) (bool, error) {
+	scope, err := s.userScope(r)
+	if err != nil {
+		return false, err
+	}
+	return scope.allows(slug), nil
 }
 
 // trackedWorkspaces renders the allowed set for the login page, so it is
