@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "gocov-preview",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "GOCOV_PREVIEW_AUTH=1",
+        "go",
+        "run",
+        "./cmd/gocov-preview"
+      ],
+      "port": 8099,
+      "autoPort": true
+    }
+  ]
+}

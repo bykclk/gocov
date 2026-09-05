@@ -3,7 +3,12 @@
 coverage.out
 *.test
 .env
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/launch.json
+!.claude/rules/
+!.claude/skills/
+!.claude/hooks/
 docker-compose.override.yml
 deploy/.env
 deploy/github-app.pem
