@@ -419,18 +419,27 @@ func (s *Store) UpsertUser(_ context.Context, u *store.User) error {
 	if existing := find(s.users, func(x *store.User) bool { return x.Forge == u.Forge && x.ForgeUUID == u.ForgeUUID }); existing != nil {
 		existing.Email = u.Email
 		existing.DisplayName = u.DisplayName
-		existing.ForgeWorkspaces = u.ForgeWorkspaces
-		existing.ForgeOwnedWorkspaces = u.ForgeOwnedWorkspaces
+		existing.ForgeWorkspaces = slices.Clone(u.ForgeWorkspaces)
+		existing.ForgeOwnedWorkspaces = slices.Clone(u.ForgeOwnedWorkspaces)
 		existing.LastLoginAt = now
-		*u = *existing
+		*u = *copyUser(existing)
 		return nil
 	}
 	s.userSeq++
 	u.ID = s.userSeq
 	u.CreatedAt = now
 	u.LastLoginAt = now
-	s.users[u.ID] = new(*u)
+	s.users[u.ID] = copyUser(u)
 	return nil
+}
+
+// copyUser deep-copies a user so callers and the store never alias the
+// forge-workspace snapshots, matching the postgres JSON round-trip.
+func copyUser(u *store.User) *store.User {
+	cp := new(*u)
+	cp.ForgeWorkspaces = slices.Clone(u.ForgeWorkspaces)
+	cp.ForgeOwnedWorkspaces = slices.Clone(u.ForgeOwnedWorkspaces)
+	return cp
 }
 
 func (s *Store) UserByID(_ context.Context, id int64) (*store.User, error) {
@@ -440,7 +449,7 @@ func (s *Store) UserByID(_ context.Context, id int64) (*store.User, error) {
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return new(*u), nil
+	return copyUser(u), nil
 }
 
 func (s *Store) ListUsers(_ context.Context) ([]*store.User, error) {
@@ -448,7 +457,7 @@ func (s *Store) ListUsers(_ context.Context) ([]*store.User, error) {
 	defer s.mu.Unlock()
 	out := make([]*store.User, 0, len(s.users))
 	for _, u := range s.users {
-		out = append(out, new(*u))
+		out = append(out, copyUser(u))
 	}
 	slices.SortFunc(out, func(a, b *store.User) int { return cmp.Compare(a.ID, b.ID) })
 	return out, nil
@@ -494,7 +503,7 @@ func (s *Store) UserBySession(_ context.Context, tokenHash string) (*store.User,
 	if !ok {
 		return nil, store.ErrNotFound
 	}
-	return new(*u), nil
+	return copyUser(u), nil
 }
 
 func (s *Store) DeleteSession(_ context.Context, tokenHash string) error {
