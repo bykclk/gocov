@@ -345,9 +345,12 @@ document.addEventListener("click", (e) => {
       return props;
     };
     document.querySelectorAll("[data-ph-view]").forEach((el) => posthog.capture(el.dataset.phView, context(el)));
+    // Most of these clicks navigate at once, and a batched event would
+    // be lost with the page: send them straight away over sendBeacon,
+    // which survives the unload.
     document.addEventListener("click", (e) => {
       const el = e.target.closest("[data-ph-click]");
-      if (el) posthog.capture(el.dataset.phClick, context(el));
+      if (el) posthog.capture(el.dataset.phClick, context(el), { transport: "sendBeacon", send_instantly: true });
     });
   };
   document.head.appendChild(script);
