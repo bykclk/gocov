@@ -67,6 +67,10 @@ func buildServerConfig(cfg config.Server, d deps, log *slog.Logger) (server.Conf
 	if !cfg.PublicReportsEnabled() {
 		log.Info("public report pages disabled (GOCOV_PUBLIC_REPORTS=off)")
 	}
+	if cfg.PostHog.Configured() {
+		srvCfg.PostHog = server.PostHog{Key: cfg.PostHog.Key, Host: cfg.PostHog.Host}
+		log.Info("posthog analytics enabled", "host", cfg.PostHog.Host)
+	}
 	// Assigned conditionally: a typed-nil *github.App in the interface
 	// field would read as "configured".
 	if app != nil {

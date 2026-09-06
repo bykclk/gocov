@@ -60,7 +60,28 @@ type Server struct {
 	GitHubAppPrivateKey string `env:"GOCOV_GITHUB_APP_PRIVATE_KEY"`
 
 	GitHubWebhookSecret string `env:"GOCOV_GITHUB_WEBHOOK_SECRET"`
+
+	// PostHog is the opt-in browser analytics for the web UI. Unset (the
+	// default) keeps the pages free of third-party scripts, which is the
+	// promise docs/self-hosting.md makes to operators; gocov's own hosted
+	// instance sets it.
+	PostHog PostHog `envPrefix:"GOCOV_POSTHOG_"`
 }
+
+// PostHog is the browser-analytics pair: the project API key that turns
+// the web UI snippet on, and the ingestion host it reports to.
+type PostHog struct {
+	Key string `env:"KEY"`
+	// Host is the PostHog ingestion endpoint the browser loads the
+	// snippet from and sends events to. The EU cloud is the default so
+	// that switching analytics on never moves visitor data out of the EU
+	// by accident; a self-hosted PostHog goes here too.
+	Host string `env:"HOST" envDefault:"https://eu.i.posthog.com"`
+}
+
+// Configured reports whether the analytics snippet is on. The host has a
+// default, so the key alone is the switch.
+func (p PostHog) Configured() bool { return p.Key != "" }
 
 // LoadServer reads and validates the server configuration from the
 // process environment.
@@ -92,6 +113,8 @@ func (c *Server) normalize() {
 	c.SecretKey = strings.TrimSpace(c.SecretKey)
 	c.Mode = strings.TrimSpace(c.Mode)
 	c.PublicReports = strings.ToLower(strings.TrimSpace(c.PublicReports))
+	c.PostHog.Key = strings.TrimSpace(c.PostHog.Key)
+	c.PostHog.Host = strings.TrimRight(strings.TrimSpace(c.PostHog.Host), "/")
 	c.AllowedWorkspaces = cleanList(c.AllowedWorkspaces, strings.TrimSpace)
 	c.OIDCIssuers = cleanList(c.OIDCIssuers, func(iss string) string {
 		return strings.TrimRight(strings.TrimSpace(iss), "/")
@@ -157,6 +180,16 @@ func (c Server) validate() error {
 		u, err := url.Parse(iss)
 		if err != nil || u.Scheme != "https" || u.Host == "" {
 			return fmt.Errorf("GOCOV_OIDC_ISSUERS entry %q must be an https URL (the GitLab instance's base URL)", iss)
+		}
+	}
+	// The host ends up in a <script src> on every page, so a value that
+	// is not an absolute URL would break the UI silently rather than the
+	// boot loudly. Only checked once the key turns the feature on: the
+	// default host is fine to carry around unused.
+	if c.PostHog.Configured() {
+		u, err := url.Parse(c.PostHog.Host)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return fmt.Errorf("GOCOV_POSTHOG_HOST=%q: want an absolute URL such as https://eu.i.posthog.com", c.PostHog.Host)
 		}
 	}
 	return nil

@@ -168,6 +168,40 @@ func TestLoadServerPublicReports(t *testing.T) {
 	}
 }
 
+func TestLoadServerPostHog(t *testing.T) {
+	cfg, err := LoadServerFrom(minimal(nil))
+	if err != nil {
+		t.Fatalf("LoadServerFrom: %v", err)
+	}
+	if cfg.PostHog.Configured() {
+		t.Error("PostHog reads as configured with no key set")
+	}
+	if cfg.PostHog.Host != "https://eu.i.posthog.com" {
+		t.Errorf("PostHog.Host = %q, want the EU cloud default", cfg.PostHog.Host)
+	}
+
+	cfg, err = LoadServerFrom(minimal(map[string]string{
+		"GOCOV_POSTHOG_KEY": " phc_abc ", "GOCOV_POSTHOG_HOST": "https://ph.example.com/ ",
+	}))
+	if err != nil {
+		t.Fatalf("LoadServerFrom: %v", err)
+	}
+	if !cfg.PostHog.Configured() || cfg.PostHog.Key != "phc_abc" || cfg.PostHog.Host != "https://ph.example.com" {
+		t.Errorf("PostHog = %+v, want the trimmed key and host without the trailing slash", cfg.PostHog)
+	}
+
+	// A bare host would end up in a <script src> that no browser resolves.
+	if _, err := LoadServerFrom(minimal(map[string]string{
+		"GOCOV_POSTHOG_KEY": "phc_abc", "GOCOV_POSTHOG_HOST": "eu.i.posthog.com",
+	})); err == nil || !strings.Contains(err.Error(), "GOCOV_POSTHOG_HOST") {
+		t.Fatalf("error = %v, want one naming GOCOV_POSTHOG_HOST", err)
+	}
+	// ...but only once the key turns the feature on.
+	if _, err := LoadServerFrom(minimal(map[string]string{"GOCOV_POSTHOG_HOST": "nonsense"})); err != nil {
+		t.Fatalf("host without key: %v, want no error", err)
+	}
+}
+
 func TestLoadServerAllowedWorkspaces(t *testing.T) {
 	cases := []struct {
 		raw  string

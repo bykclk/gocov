@@ -272,3 +272,42 @@ document.addEventListener("click", (e) => {
     init();
   });
 })();
+
+  // Analytics: the layout renders <meta name="gocov-posthog"> only when the
+// operator configured a PostHog key (GOCOV_POSTHOG_KEY); without it nothing
+// below runs and no third-party script is loaded. The setup is deliberately
+// narrow — no cookie or localStorage (memory persistence), no autocapture,
+// no session recording, Do Not Track honoured — and signed-in users are
+// identified by their numeric gocov id, never by email.
+(function () {
+  const meta = document.querySelector('meta[name="gocov-posthog"]');
+  if (!meta || !meta.content) return;
+  const script = document.createElement("script");
+  script.src = meta.dataset.host + "/static/array.js";
+  script.async = true;
+  script.onload = () => {
+    if (!window.posthog) return;
+    posthog.init(meta.content, {
+      api_host: meta.dataset.host,
+      persistence: "memory",
+      autocapture: false,
+      disable_session_recording: true,
+      capture_pageview: false,
+      capture_pageleave: false,
+      respect_dnt: true,
+      person_profiles: "identified_only",
+    });
+    if (meta.dataset.user) posthog.identify("user:" + meta.dataset.user);
+    const pageview = () => {
+      // ?ref= is how the landing page and badges attribute a visit; PostHog
+      // only picks up utm_* on its own, so carry it explicitly.
+      const ref = new URLSearchParams(location.search).get("ref");
+      posthog.capture("$pageview", ref ? { ref } : undefined);
+    };
+    pageview();
+    // htmx swaps that push a URL (branch switch, upload paging) are
+    // navigations to the reader even though the document never reloads.
+    document.addEventListener("htmx:pushedIntoHistory", pageview);
+  };
+  document.head.appendChild(script);
+})();
