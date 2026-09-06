@@ -14,7 +14,7 @@ no toolchain needed. Pin a version, and cache the download on self-hosted runner
 
 <!-- x-release-please-start-version -->
 ```sh
-ver=v0.22.0
+ver=v0.23.0
 arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
 bin="$HOME/.cache/gocov/gocov-$ver-linux-$arch"
 if [ ! -x "$bin" ]; then

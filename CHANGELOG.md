@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/gocov/gocov/compare/v0.22.0...v0.23.0) (2026-09-06)
+
+
+### Features
+
+* page leaves, web vitals and setup-page session replay in the analytics snippet ([#123](https://github.com/gocov/gocov/issues/123)) ([e7d3a8c](https://github.com/gocov/gocov/commit/e7d3a8c30cd151242a095bc42189943fcfe9be87))
+
 ## [0.22.0](https://github.com/gocov/gocov/compare/v0.21.0...v0.22.0) (2026-09-06)
 
 
