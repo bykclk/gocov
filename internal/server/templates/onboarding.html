@@ -1,6 +1,13 @@
 {{define "title"}}gocov — set up coverage{{end}}
 {{define "content"}}
-<div class="wiz">
+{{/* The wizard root names the step and face it shows for the analytics
+     snippet (data-ph-view fires onboarding_step_viewed with that context
+     once per load); the buttons below declare their own click events. */}}
+{{$step := "workspace"}}{{$face := ""}}
+{{if eq .Active 0}}{{$face = .WSState}}
+{{else if eq .Active 1}}{{$step = "wire_ci"}}{{$face = "ci"}}
+{{else}}{{$step = "first_upload"}}{{$face = "awaiting"}}{{if .Repos}}{{$face = "received"}}{{end}}{{end}}
+<div class="wiz" data-ph-view="onboarding_step_viewed" data-ph-step="{{$step}}" data-ph-face="{{$face}}" data-ph-forge="{{.Forge}}">
   <div class="head">
     <h1>Set up coverage</h1>
     <p class="sub">Three steps, about two minutes. You can leave and come back &mdash; progress is saved.</p>
@@ -47,7 +54,7 @@
     &mdash; and the same approval gives gocov its own bot identity for posting back.</p>
     <div class="notice">You&rsquo;re signed in as <strong>{{.Account}}</strong>. Install to continue.</div>
     <div class="foot">
-      {{if .GitHubInstallURL}}<a class="btn primary" href="{{.GitHubInstallURL}}">Install the gocov app</a>{{end}}
+      {{if .GitHubInstallURL}}<a class="btn primary" href="{{.GitHubInstallURL}}" data-ph-click="install_app_clicked">Install the gocov app</a>{{end}}
       <span class="spacer"></span>
       <span class="hint">gocov never needs your source code &mdash; only coverage profiles you upload.</span>
     </div>
@@ -78,10 +85,10 @@
         {{else if eq .State "unowned"}}<span class="m">Not set up &mdash; creating it takes an owner of the {{$noun}}; ask one to sign in and register it</span>
         {{else}}<span class="m">Not set up</span>{{end}}</span>
         {{if eq .State "member"}}<a class="btn" href="/">Open dashboard</a>
-        {{else if eq .State "registered"}}<form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn primary" type="submit">Join</button></form>
+        {{else if eq .State "registered"}}<form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn primary" type="submit" data-ph-click="register_workspace_clicked">Join</button></form>
         {{else if eq .State "taken"}}<span class="chip plain">Unavailable</span>
         {{else if eq .State "unowned"}}<span class="chip plain">Owners only</span>
-        {{else}}<form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn primary" type="submit">Create the workspace</button></form>{{end}}
+        {{else}}<form method="post" action="/register"><input type="hidden" name="prefix" value="{{.Prefix}}"><button class="btn primary" type="submit" data-ph-click="register_workspace_clicked">Create the workspace</button></form>{{end}}
       </div>
       {{end}}
     </div>
@@ -110,9 +117,9 @@
     {{template "wiz-reporting" .}}
 
     <div class="foot">
-      <a class="btn" href="/onboarding">Change {{if eq .Forge "github"}}install{{else}}workspace{{end}}</a>
+      <a class="btn" href="/onboarding" data-ph-click="change_workspace_clicked">Change {{if eq .Forge "github"}}install{{else}}workspace{{end}}</a>
       <span class="spacer"></span>
-      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup">Continue to CI</a>
+      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup" data-ph-click="continue_to_ci_clicked">Continue to CI</a>
     </div>
   </div>
 </section>
@@ -142,7 +149,7 @@
       check runs and PR comments, posted as <code>gocov[bot]</code> with no tokens to manage.</p>
       <div class="who"><span class="face bot">g</span>
         <span><span class="id">gocov[bot]</span><br><span class="m">Not connected yet</span></span></div>
-      {{if .GrantURL}}<div class="row"><a class="btn primary" href="{{.GrantURL}}">Grant write access</a>
+      {{if .GrantURL}}<div class="row"><a class="btn primary" href="{{.GrantURL}}" data-ph-click="grant_write_access_clicked">Grant write access</a>
         <span class="hint">Optional &mdash; you can turn this on later from Settings.</span></div>{{end}}
       {{end}}
     {{else}}
@@ -159,7 +166,7 @@
         <span><span class="id">@{{with .CurrentUser}}{{.DisplayName}}{{end}}</span><br>
         <span class="m">Comments would appear as you &mdash; there is no bot account here</span></span>
         <span class="spacer"></span><span class="chip plain">Your account</span></div>
-      {{if .GrantURL}}<div class="row"><a class="btn primary" href="{{.GrantURL}}">Grant write access</a>
+      {{if .GrantURL}}<div class="row"><a class="btn primary" href="{{.GrantURL}}" data-ph-click="grant_write_access_clicked">Grant write access</a>
         <span class="hint">Optional &mdash; you can turn this on later from Settings.</span></div>{{end}}
       {{end}}
     {{end}}
@@ -195,7 +202,7 @@
         <span class="spacer"></span><span class="muted small">Your gocov instance &mdash; a plain value, not a secret</span></div>
       <div class="secret-bd">
         <span class="v" id="srv">{{.BaseURL}}</span>
-        <button class="btn primary" type="button" data-copy="#srv">Copy</button>
+        <button class="btn primary" type="button" data-copy="#srv" data-ph-click="copy_server_clicked">Copy</button>
       </div>
     </div>
     {{end}}
@@ -207,8 +214,8 @@
            copy input) out of the session replay that runs on this page. */}}
       <div class="secret-bd ph-no-capture">
         <span class="v" id="tok" data-full="{{.Token}}">{{.TokenMasked}}</span>
-        <button class="btn" type="button" data-reveal="#tok">Reveal</button>
-        <button class="btn primary" type="button" data-copy="#tok-full">Copy</button>
+        <button class="btn" type="button" data-reveal="#tok" data-ph-click="reveal_token_clicked">Reveal</button>
+        <button class="btn primary" type="button" data-copy="#tok-full" data-ph-click="copy_token_clicked">Copy</button>
         <input type="hidden" id="tok-full" value="{{.Token}}">
       </div>
     </div>
@@ -275,7 +282,7 @@ pipelines:
       - step: *coverage</code></pre>
     {{end}}
     <div class="row">
-      <button class="btn" type="button" data-copy="#snippet">Copy snippet</button>
+      <button class="btn" type="button" data-copy="#snippet" data-ph-click="copy_snippet_clicked">Copy snippet</button>
       <span class="muted small">Commit, branch, repo and PR are auto-detected; other languages
       can upload lcov, JaCoCo or Cobertura with <code>-format</code>.</span>
     </div>
@@ -283,7 +290,7 @@ pipelines:
       <span class="hint">Reporting and CI are independent &mdash; coverage uploads even if
       reporting is off.</span>
       <span class="spacer"></span>
-      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup?awaiting=1">I&rsquo;ve added these</a>
+      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup?awaiting=1" data-ph-click="added_to_ci_clicked">I&rsquo;ve added these</a>
     </div>
   </div>
 </section>
@@ -297,7 +304,9 @@ pipelines:
 
 {{define "setup-status"}}
 {{if .Repos}}
-<div class="card pad" id="setup-status">
+{{/* Landed is set only on the load the poll redirected to when the first
+     upload arrived, so the event fires once, not on every later visit. */}}
+<div class="card pad" id="setup-status"{{if .Landed}} data-ph-view="first_upload_received"{{end}}>
   <h2>Coverage is flowing</h2>
   {{with .FirstReport}}
   <p class="sub">First profile received from <code>{{.Slug}}</code> on <code>{{.Branch}}</code>{{if .CommitShort}} &middot; commit <code>{{.CommitShort}}</code>{{end}}.</p>
@@ -320,8 +329,8 @@ pipelines:
     to get statuses on every commit.</div>
   {{end}}
   <div class="foot">
-    {{with .FirstReport}}<a class="btn primary" href="/repos/{{.Slug}}">Open the dashboard</a>{{else}}<a class="btn primary" href="/">Open the dashboard</a>{{end}}
-    <a class="btn" href="/workspaces/{{pathesc .Workspace.Prefix}}">Set a coverage gate</a>
+    {{with .FirstReport}}<a class="btn primary" href="/repos/{{.Slug}}" data-ph-click="open_dashboard_clicked">Open the dashboard</a>{{else}}<a class="btn primary" href="/" data-ph-click="open_dashboard_clicked">Open the dashboard</a>{{end}}
+    <a class="btn" href="/workspaces/{{pathesc .Workspace.Prefix}}" data-ph-click="set_gate_clicked">Set a coverage gate</a>
   </div>
 </div>
 {{else}}

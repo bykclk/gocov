@@ -24,7 +24,7 @@
     {{end}}
     <div class="providers">
     {{range .Providers}}
-      <a class="btn provider login-btn" href="/oauth/{{.Name}}/start?next={{$.Next}}"><span class="pmark pmark-{{.Name}}">{{with forgeicon .Name}}{{.}}{{else}}{{.Abbrev}}{{end}}</span> Sign in with {{.Label}}</a>
+      <a class="btn provider login-btn" href="/oauth/{{.Name}}/start?next={{$.Next}}" data-ph-click="sign_in_clicked" data-ph-forge="{{.Name}}"><span class="pmark pmark-{{.Name}}">{{with forgeicon .Name}}{{.}}{{else}}{{.Abbrev}}{{end}}</span> Sign in with {{.Label}}</a>
     {{end}}
     </div>
     {{if .Hosted}}

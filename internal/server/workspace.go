@@ -404,6 +404,7 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Active"] = active
 	data["Forge"] = ws.Forge
+	data["Landed"] = active == 2 && len(repos) > 0 && r.FormValue("landed") == "1"
 	data["Rail"] = onboardingRail(active, ws.Forge, ws.Prefix, len(repos) > 0)
 	s.render(w, r, "onboarding.html", data)
 }
@@ -424,8 +425,11 @@ func (s *Server) handleWorkspaceSetupStatus(w http.ResponseWriter, r *http.Reque
 	// The poll only owns the waiting card. Once the first upload lands,
 	// reload the whole page so the rail and panel move to the clean
 	// First-upload done state instead of stacking it under the CI card.
+	// ?landed=1 marks that load as the moment the first upload arrived, so
+	// the page can report it once (a later reload of the same state must
+	// not count again).
 	if repos, _ := data["Repos"].([]*store.Repo); len(repos) > 0 {
-		w.Header().Set("HX-Redirect", workspaceURL(ws.Prefix, "/setup"))
+		w.Header().Set("HX-Redirect", workspaceURL(ws.Prefix, "/setup")+"?landed=1")
 		return
 	}
 	s.renderPartial(w, "onboarding.html", "setup-status", data)

@@ -325,6 +325,30 @@ document.addEventListener("click", (e) => {
     // htmx swaps that push a URL (branch switch, upload paging) are
     // navigations to the reader even though the document never reloads.
     document.addEventListener("htmx:pushedIntoHistory", pageview);
+
+    // Product events are declared in the templates, next to the UI they
+    // describe: data-ph-view="<event>" fires once when the page loads,
+    // data-ph-click="<event>" on click. Every event carries the wizard
+    // context from the element that declares data-ph-step (step, face,
+    // forge) plus the declaring element's own data-ph-* values, so a click
+    // knows which page and forge it happened on. Event names only — never
+    // form values.
+    const reserved = ["phView", "phClick"];
+    const context = (el) => {
+      const props = {};
+      const root = document.querySelector("[data-ph-step]");
+      for (const node of root && root !== el ? [root, el] : [el]) {
+        for (const [k, v] of Object.entries(node.dataset)) {
+          if (k.startsWith("ph") && !reserved.includes(k)) props[k.slice(2).toLowerCase()] = v;
+        }
+      }
+      return props;
+    };
+    document.querySelectorAll("[data-ph-view]").forEach((el) => posthog.capture(el.dataset.phView, context(el)));
+    document.addEventListener("click", (e) => {
+      const el = e.target.closest("[data-ph-click]");
+      if (el) posthog.capture(el.dataset.phClick, context(el));
+    });
   };
   document.head.appendChild(script);
 })();
