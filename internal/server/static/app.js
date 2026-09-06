@@ -293,7 +293,11 @@ document.addEventListener("click", (e) => {
       autocapture: false,
       disable_session_recording: true,
       capture_pageview: false,
-      capture_pageleave: false,
+      // Page leaves give PostHog bounce rate and time on page; with memory
+      // persistence they still stay within the one page load.
+      capture_pageleave: true,
+      // Core Web Vitals (LCP, INP, CLS): performance numbers, no content.
+      capture_performance: { web_vitals: true },
       respect_dnt: true,
       person_profiles: "identified_only",
     });
