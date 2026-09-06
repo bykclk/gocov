@@ -290,7 +290,11 @@ document.addEventListener("click", (e) => {
     posthog.init(meta.content, {
       api_host: meta.dataset.host,
       persistence: "memory",
+      // The app shows private repo names and source; no click text, no
+      // heatmaps. JS errors are fine: message and stack only.
       autocapture: false,
+      enable_heatmaps: false,
+      capture_exceptions: true,
       disable_session_recording: true,
       capture_pageview: false,
       // Page leaves give PostHog bounce rate and time on page; with memory
