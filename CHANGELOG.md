@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/gocov/gocov/compare/v0.21.0...v0.22.0) (2026-09-06)
+
+
+### Features
+
+* opt-in PostHog analytics for the web UI ([#121](https://github.com/gocov/gocov/issues/121)) ([290032f](https://github.com/gocov/gocov/commit/290032f31ddb9153e2c7a6e31da917de407255ad))
+
 ## [0.21.0](https://github.com/gocov/gocov/compare/v0.20.0...v0.21.0) (2026-09-04)
 
 
