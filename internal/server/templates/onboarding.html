@@ -203,7 +203,9 @@
     <div class="secret">
       <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
         <span class="spacer"></span><span class="muted small">Shown once &mdash; rotate it any time from Settings</span></div>
-      <div class="secret-bd">
+      {{/* ph-no-capture keeps the token (masked text, data-full, the hidden
+           copy input) out of the session replay that runs on this page. */}}
+      <div class="secret-bd ph-no-capture">
         <span class="v" id="tok" data-full="{{.Token}}">{{.TokenMasked}}</span>
         <button class="btn" type="button" data-reveal="#tok">Reveal</button>
         <button class="btn primary" type="button" data-copy="#tok-full">Copy</button>

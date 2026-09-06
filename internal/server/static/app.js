@@ -277,11 +277,19 @@ document.addEventListener("click", (e) => {
 // operator configured a PostHog key (GOCOV_POSTHOG_KEY); without it nothing
 // below runs and no third-party script is loaded. The setup is deliberately
 // narrow — no cookie or localStorage (memory persistence), no autocapture,
-// no session recording, Do Not Track honoured — and signed-in users are
-// identified by their numeric gocov id, never by email.
+// Do Not Track honoured — and signed-in users are identified by their
+// numeric gocov id, never by email. Session replay runs only on the sign-in
+// and setup pages (replayPaths), with every input masked and the upload
+// token card blocked (class ph-no-capture); report, upload and source pages
+// are never recorded.
 (function () {
   const meta = document.querySelector('meta[name="gocov-posthog"]');
   if (!meta || !meta.content) return;
+  // The pages worth watching someone go through, and nothing that renders
+  // coverage or source. The PostHog project carries the same list as a URL
+  // trigger, so a page outside it is never recorded even if this drifts.
+  const replayPaths = /^\/(login|register|onboarding|github\/setup|workspaces\/[^/]+\/setup)\/?$/;
+  const replay = replayPaths.test(location.pathname);
   const script = document.createElement("script");
   script.src = meta.dataset.host + "/static/array.js";
   script.async = true;
@@ -295,7 +303,8 @@ document.addEventListener("click", (e) => {
       autocapture: false,
       enable_heatmaps: false,
       capture_exceptions: true,
-      disable_session_recording: true,
+      disable_session_recording: !replay,
+      session_recording: { maskAllInputs: true, blockClass: "ph-no-capture" },
       capture_pageview: false,
       // Page leaves give PostHog bounce rate and time on page; with memory
       // persistence they still stay within the one page load.
