@@ -240,3 +240,13 @@ func testPEM(t *testing.T) []byte {
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
 }
+
+func TestPostHogWiring(t *testing.T) {
+	if got := build(t, map[string]string{}).PostHog; got.Configured() {
+		t.Errorf("PostHog = %+v with nothing set, want off", got)
+	}
+	got := build(t, map[string]string{"GOCOV_POSTHOG_KEY": "phc_abc"}).PostHog
+	if !got.Configured() || got.Key != "phc_abc" || got.Host != "https://eu.i.posthog.com" {
+		t.Errorf("PostHog = %+v, want the key with the EU default host", got)
+	}
+}

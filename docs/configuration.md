@@ -19,6 +19,8 @@
 | `GOCOV_MODE`                   | `private`                  | `hosted` opens sign-in to any forge account with self-service workspace registration                                                                         |
 | `GOCOV_PUBLIC_REPORTS`         | `on`                       | `off` disables the anonymous read-only report pages that public repos otherwise get                                                                          |
 | `GOCOV_OIDC_ISSUERS`           | —                          | comma-separated trusted GitLab issuer(s) for tokenless uploads (self-managed instance URLs, https); replaces the gitlab.com default. GitHub and Bitbucket are always trusted |
+| `GOCOV_POSTHOG_KEY`            | —                          | PostHog project API key; when set, the web UI loads PostHog's browser snippet (cookieless, no session recording). Unset, the pages load nothing off-site |
+| `GOCOV_POSTHOG_HOST`           | `https://eu.i.posthog.com` | PostHog ingestion host the snippet loads from and reports to (the EU cloud by default; a self-hosted PostHog works too)                                    |
 
 How the pieces fit together:
 

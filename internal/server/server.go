@@ -88,6 +88,10 @@ type Config struct {
 	// ones (GOCOV_OIDC_ISSUERS): self-managed GitLab instance URLs whose CI
 	// ID tokens name repos by project_path, the same as gitlab.com.
 	OIDCIssuers []string
+	// PostHog turns on the browser analytics snippet in the web UI
+	// (analytics.go). The zero value leaves every page free of third-party
+	// scripts, which is what self-hosted deployments get by default.
+	PostHog PostHog
 }
 
 // The forge connectors a deployment can configure. They are declared in
@@ -134,6 +138,8 @@ type Server struct {
 	// secureCookies marks auth cookies Secure when the public base URL is
 	// https (the UI is then served through TLS or a terminating proxy).
 	secureCookies bool
+	// posthog is the analytics snippet configuration; zero means off.
+	posthog PostHog
 }
 
 // New builds a Server; panics only on programmer error (bad templates).
@@ -243,6 +249,7 @@ func New(cfg Config) *Server {
 		hosted:            cfg.Hosted,
 		publicReports:     cfg.PublicReports,
 		secureCookies:     strings.HasPrefix(cfg.BaseURL, "https://"),
+		posthog:           cfg.PostHog,
 	}
 	// Everything that decides rather than transports lives in core; the
 	// server holds one handle to it.
@@ -377,6 +384,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 func (s *Server) layoutData(r *http.Request, data map[string]any) {
 	data["AuthOpen"] = !s.authEnabled()
 	data["CurrentUser"] = currentUser(r)
+	if s.posthog.Configured() {
+		data["PostHog"] = s.posthog.view(currentUser(r))
+	}
 }
 
 // handleNotFound is the catch-all for paths no route claims. Browser

@@ -34,6 +34,9 @@ windows on amd64 and arm64, with `checksums.txt` alongside.
 
 All of it is AGPL-3.0. The server contacts nothing but your database and the forge APIs — no telemetry, no license
 check, no call home — so a running deployment depends on this project only for the next version you choose to run.
+The web UI loads nothing off-site either, unless you opt in: setting `GOCOV_POSTHOG_KEY` adds PostHog's browser
+snippet to the pages (cookieless, no session recording, `GOCOV_POSTHOG_HOST` defaults to the EU cloud), which is how
+gocov's own hosted instance counts page views. Leave it unset and nothing changes.
 
 The footprint is modest. gocov's own hosted instance is one 0.5 vCPU / 1 GB arm64 container behind a managed load
 balancer, in front of a 2 vCPU / 1 GB managed Postgres — and until it moved there it ran the compose file below on a

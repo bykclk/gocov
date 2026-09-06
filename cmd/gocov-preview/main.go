@@ -322,6 +322,7 @@ func main() {
 		GitHubApp:        devGitHubApp{fg: forgefake.New()},
 		BitbucketConnect: devBBConnect{fg: forgefake.New()},
 		GitLabConnect:    devGLConnect{fg: forgefake.New()},
+		PostHog:          server.PostHog{Key: cfg.PostHogKey, Host: "https://eu.i.posthog.com"},
 	})
 	log.Println("preview on :" + cfg.Port)
 	log.Fatal(http.ListenAndServe(":"+cfg.Port, srv))
