@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -42,5 +43,80 @@ func TestPostHogMetaTag(t *testing.T) {
 	}
 	if strings.Contains(body, "jane@example.com") && strings.Contains(body, `data-user="jane`) {
 		t.Error("meta tag carries the email")
+	}
+}
+
+// The wizard declares its product events in the markup (data-ph-*), which
+// static/app.js turns into PostHog captures when a key is configured. Pin
+// the declarations so a template edit cannot silently drop a funnel step.
+func TestOnboardingDeclaresProductEvents(t *testing.T) {
+	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
+	if body := get(f, "/login").Body.String(); !strings.Contains(body,
+		`data-ph-click="sign_in_clicked" data-ph-forge="bitbucket"`) {
+		t.Errorf("login page misses the sign-in click event:\n%s", body)
+	}
+	sess := hostedSignIn(t, f, "/", "/onboarding")
+	body := get(f, "/onboarding", sess).Body.String()
+	for _, want := range []string{
+		`data-ph-view="onboarding_step_viewed" data-ph-step="workspace" data-ph-face="pick" data-ph-forge="bitbucket"`,
+		`data-ph-click="register_workspace_clicked"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("onboarding pick face misses %s:\n%s", want, body)
+		}
+	}
+	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusSeeOther {
+		t.Fatalf("register: status = %d", rec.Code)
+	}
+	body = get(f, "/onboarding?ws=acme", sess).Body.String()
+	for _, want := range []string{
+		`data-ph-step="workspace" data-ph-face="ready"`,
+		`data-ph-click="continue_to_ci_clicked"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("onboarding ready face misses %s:\n%s", want, body)
+		}
+	}
+	body = get(f, "/workspaces/acme/setup", sess).Body.String()
+	for _, want := range []string{
+		`data-ph-step="wire_ci" data-ph-face="ci"`,
+		`data-ph-click="reveal_token_clicked"`, `data-ph-click="copy_token_clicked"`,
+		`data-ph-click="copy_snippet_clicked"`, `data-ph-click="added_to_ci_clicked"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("CI step misses %s:\n%s", want, body)
+		}
+	}
+	if body := get(f, "/workspaces/acme/setup?awaiting=1", sess).Body.String(); !strings.Contains(body,
+		`data-ph-step="first_upload" data-ph-face="awaiting"`) {
+		t.Errorf("waiting face misses its step context:\n%s", body)
+	}
+
+	// The poll redirects to the setup page with ?landed=1 when the first
+	// upload arrives; only that load reports first_upload_received, while
+	// every load in that state reports the received face.
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := doUpload(t, f, ws.Token, map[string]string{
+		"repo": "acme/newrepo", "commit": "c1", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
+		t.Fatalf("upload: status = %d: %s", rec.Code, rec.Body)
+	}
+	if loc := get(f, "/workspaces/acme/setup/status", sess).Header().Get("HX-Redirect"); loc != "/workspaces/acme/setup?landed=1" {
+		t.Errorf("status poll redirected to %q, want the setup page marked landed=1", loc)
+	}
+	landed := get(f, "/workspaces/acme/setup?landed=1", sess).Body.String()
+	for _, want := range []string{
+		`data-ph-step="first_upload" data-ph-face="received"`,
+		`data-ph-view="first_upload_received"`, `data-ph-click="open_dashboard_clicked"`,
+	} {
+		if !strings.Contains(landed, want) {
+			t.Errorf("landed page misses %s:\n%s", want, landed)
+		}
+	}
+	if body := get(f, "/workspaces/acme/setup", sess).Body.String(); strings.Contains(body, "first_upload_received") ||
+		!strings.Contains(body, `data-ph-face="received"`) {
+		t.Errorf("a plain reload of the received state must keep the face but not re-report the landing:\n%s", body)
 	}
 }

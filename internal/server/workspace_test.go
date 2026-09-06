@@ -432,9 +432,10 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 		t.Fatalf("first upload: status = %d, body = %s", up.Code, up.Body)
 	}
 	// Once the upload lands the poll redirects to the clean done page
-	// rather than swapping the card in under the CI step.
+	// rather than swapping the card in under the CI step; landed=1 marks
+	// that one load for the analytics snippet.
 	st := get(f, "/workspaces/acme/setup/status", sess)
-	if loc := st.Header().Get("HX-Redirect"); loc != "/workspaces/acme/setup" {
+	if loc := st.Header().Get("HX-Redirect"); loc != "/workspaces/acme/setup?landed=1" {
 		t.Errorf("status endpoint did not redirect on flip: HX-Redirect=%q", loc)
 	}
 	// The reloaded setup page is the clean First-upload done state: the
