@@ -524,11 +524,54 @@ func TestSetupPageGitLabSnippet(t *testing.T) {
 	sess := signInVia(t, f, "gitlab")
 
 	body := get(f, "/workspaces/grp%2Fteam/setup", sess).Body.String()
-	if !strings.Contains(body, ".gitlab-ci.yml") || !strings.Contains(body, "sha256sum") {
-		t.Errorf("gitlab setup page misses the CI snippet with checksum verification:\n%s", body)
+	// gitlab.com workspaces get the CI/CD Catalog component, which does
+	// the pinned download and checksum itself.
+	if !strings.Contains(body, ".gitlab-ci.yml") || !strings.Contains(body, "component: gitlab.com/gocov/gocov/upload@1") {
+		t.Errorf("gitlab setup page misses the component snippet:\n%s", body)
+	}
+	if strings.Contains(body, "sha256sum") {
+		t.Error("gitlab.com snippet should include the component, not a raw binary download")
+	}
+	if !strings.Contains(body, "server: https://gocov.example") {
+		t.Error("self-hosted gitlab snippet should pass this server to the component")
 	}
 	if strings.Contains(body, "bitbucket-pipelines.yml") {
 		t.Error("gitlab workspace got the Bitbucket snippet")
+	}
+}
+
+// A self-managed GitLab cannot include components from gitlab.com's
+// catalog, so its wizard keeps the raw download recipe with the checksum
+// line. The server knows which GitLab it faces from the trusted OIDC
+// issuers: set means self-managed.
+func TestSetupPageSelfManagedGitLabSnippet(t *testing.T) {
+	st := storemem.New()
+	if err := st.CreateWorkspace(t.Context(),
+		&store.Workspace{Forge: "gitlab", Prefix: "grp/team", Token: "gl-secret", DefaultBranch: "main"}); err != nil {
+		t.Fatal(err)
+	}
+	gl := &fakeProvider{name: "gitlab", identity: &auth.Identity{
+		ForgeUUID: "9", DisplayName: "GL Dev", Workspaces: []string{"grp/team"},
+	}}
+	f := &fixture{
+		srv: New(Config{
+			Store:       st,
+			Blobs:       blobmem.New(),
+			Parsers:     map[string]profile.Parser{"go": profile.GoParser{}},
+			BaseURL:     "https://gocov.example",
+			Auths:       []auth.Provider{gl},
+			OIDCIssuers: []string{"https://gitlab.example"},
+		}),
+		store: st,
+	}
+	sess := signInVia(t, f, "gitlab")
+
+	body := get(f, "/workspaces/grp%2Fteam/setup", sess).Body.String()
+	if !strings.Contains(body, ".gitlab-ci.yml") || !strings.Contains(body, "sha256sum") {
+		t.Errorf("self-managed gitlab setup page misses the CI snippet with checksum verification:\n%s", body)
+	}
+	if strings.Contains(body, "component: gitlab.com") {
+		t.Error("self-managed gitlab snippet should not include the gitlab.com component")
 	}
 }
 

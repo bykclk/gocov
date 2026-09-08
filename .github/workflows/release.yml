@@ -231,9 +231,10 @@ jobs:
           docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env logs || true
 
   # A release is not finished until the wrappers follow: this opens a bump
-  # PR in gocov-action (action.yml's pinned CLI) and upload-pipe
-  # (Dockerfile ARG + pipe.yml + CHANGELOG), authored by the cross-repo
-  # App, which is installed on exactly those two repos. Merging a bump PR
+  # PR in gocov-action (action.yml's pinned CLI), upload-pipe (Dockerfile
+  # ARG + pipe.yml + CHANGELOG) and gitlab-component (the template's
+  # version default + README + CHANGELOG), authored by the cross-repo
+  # App, which is installed on exactly those three repos. Merging a bump PR
   # is that wrapper's release decision — its tag-on-release-merge workflow
   # takes it from there. Needs only the binaries, so it runs beside the
   # image build, not behind the deploy.
@@ -251,7 +252,7 @@ jobs:
           client-id: ${{ secrets.CROSSBUMP_APP_ID }}
           private-key: ${{ secrets.CROSSBUMP_APP_PRIVATE_KEY }}
           owner: gocov
-          repositories: gocov-action,upload-pipe
+          repositories: gocov-action,upload-pipe,gitlab-component
 
       - name: Open the gocov-action bump PR
         env:
@@ -301,6 +302,37 @@ jobs:
             --head "bump-gocov-$TAG" --label release \
             --title "Bake gocov CLI $TAG as $next" \
             --body "gocov $TAG is released; this bakes it into the pipe image as $next (was $old). Merging this releases the pipe: $next is tagged from pipe.yml and the multi-arch image goes to Docker Hub." \
+            || echo "::notice::bump PR for $TAG already open"
+
+      - name: Open the gitlab-component bump PR
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          set -euo pipefail
+          git clone -q "https://x-access-token:$GH_TOKEN@github.com/gocov/gitlab-component" component
+          cd component
+          old=$(sed -n 's/^ *default: *\(v[0-9][0-9.]*\) *$/\1/p' templates/upload.yml)
+          if [ "$old" = "$TAG" ]; then echo "component already pins $TAG"; exit 0; fi
+          # The component's own version is the next minor after its newest
+          # tag, exactly as tag-on-release-merge.yml over there will compute
+          # it; the CHANGELOG entry it insists on is written here.
+          latest=$(git tag --list '[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -1)
+          if [ -z "$latest" ]; then next=1.0.0; else major=${latest%%.*}; rest=${latest#*.}; next="$major.$(( ${rest%%.*} + 1 )).0"; fi
+          sed -i "s|^\( *default: *\)$old\$|\1$TAG|" templates/upload.yml
+          sed -i "s|\`$old\`|\`$TAG\`|g" README.md
+          { head -2 CHANGELOG.md
+            printf '## %s\n\n- Install gocov CLI %s (was %s).\n\n' "$next" "$TAG" "$old"
+            tail -n +3 CHANGELOG.md
+          } > CHANGELOG.new && mv CHANGELOG.new CHANGELOG.md
+          git config user.name "gocov-cross-repo-bump[bot]"
+          git config user.email "gocov-cross-repo-bump[bot]@users.noreply.github.com"
+          git checkout -q -b "bump-gocov-$TAG"
+          git commit -qam "Install gocov CLI $TAG as $next"
+          git push -qf origin "bump-gocov-$TAG"
+          gh pr create --repo gocov/gitlab-component --base main \
+            --head "bump-gocov-$TAG" --label release \
+            --title "Install gocov CLI $TAG as $next" \
+            --body "gocov $TAG is released; this pins the CLI the component installs (was $old) and cuts $next. Merging this releases the component: $next is tagged, mirrored to gitlab.com/gocov/gocov, and its pipeline publishes the CI/CD Catalog release." \
             || echo "::notice::bump PR for $TAG already open"
 
   # Deploying is a separate, reusable workflow so a rollback is the same

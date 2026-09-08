@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# What actually shipped? One command, three repos, two registries.
+# What actually shipped? One command, four repos, two registries, two
+# catalogs.
 #
 # A gocov release is not finished when the tag is cut. The CLI's binaries
 # have to be on the release, the action has to pin the new CLI and its
 # floating v1 has to point at the new action, the pipe image has to be on
-# Docker Hub for both architectures with the new CLI baked in, and the
-# pipe's tag has to exist on *both* of its remotes. Six things in five
-# places, checked by hand until now — which is how the pipe spent ten days
-# in August shipping a CLI two releases old without anyone noticing.
+# Docker Hub for both architectures with the new CLI baked in, the pipe's
+# tag has to exist on *both* of its remotes, and the GitLab component has
+# to pin the new CLI, reach its gitlab.com mirror and be released to the
+# CI/CD Catalog there. Checked by hand until now — which is how the pipe
+# spent ten days in August shipping a CLI two releases old without anyone
+# noticing.
 #
 # Every check reads the published world over the network: GitHub releases
-# and tags, the default branches, the Docker registry, Bitbucket's tag
-# list. Nothing here trusts the working tree, because the working tree is
-# not what users get.
+# and tags, the default branches, the Docker registry, Bitbucket's and
+# GitLab's tag lists. Nothing here trusts the working tree, because the
+# working tree is not what users get.
 #
 # Usage:
 #   scripts/verify-release.sh            # verify the newest gocov release
@@ -32,6 +35,8 @@ PIPE_REPO=gocov/upload-pipe
 PIPE_IMAGE=gocov/upload-pipe
 PIPE_BITBUCKET=gocov/upload-pipe
 SERVER_IMAGE=gocov/gocov-server
+COMPONENT_REPO=gocov/gitlab-component
+COMPONENT_GITLAB=gocov/gocov   # the mirror, where the CI/CD Catalog entry lives
 # The first release whose workflow attested its assets and image. Older
 # tags legitimately have no provenance, so the check is skipped for them
 # rather than failing a scheduled run that verifies an older release.
@@ -261,6 +266,52 @@ if command -v docker >/dev/null 2>&1 && docker version >/dev/null 2>&1; then
   fi
 else
   skip "did not open $PIPE_IMAGE:0 to check the baked CLI" "docker is not available here"
+fi
+
+# ---------------------------------------------------------- component --
+head2 "$COMPONENT_REPO"
+
+# The GitLab component's release lives in two places: the GitHub repo
+# that is its source, and the gitlab.com mirror whose pipeline creates the
+# release the CI/CD Catalog lists. A tag on only one is a component that
+# says it pins the new CLI while `include: component: …@1` keeps serving
+# the old one.
+comp_tag=$(gh release view --repo "$COMPONENT_REPO" --json tagName --jq .tagName 2>/dev/null)
+if [ -z "$comp_tag" ]; then
+  bad "could not read the latest $COMPONENT_REPO release"
+else
+  ok "latest component release is $comp_tag"
+
+  released_pin=$(contents "$COMPONENT_REPO" templates/upload.yml "$comp_tag" |
+    sed -n 's/^ *default: *\(v[0-9][0-9.]*\) *$/\1/p')
+  if [ "$released_pin" = "$tag" ]; then
+    ok "component $comp_tag installs CLI $tag"
+  else
+    bad "component $comp_tag installs CLI ${released_pin:-<none found>}, not $tag" \
+      "users on upload@1 are getting ${released_pin:-an unknown CLI}"
+  fi
+
+  main_pin=$(contents "$COMPONENT_REPO" templates/upload.yml main |
+    sed -n 's/^ *default: *\(v[0-9][0-9.]*\) *$/\1/p')
+  if [ "$main_pin" = "$tag" ]; then
+    ok "component main installs CLI $tag"
+  else
+    bad "component main installs CLI ${main_pin:-<none found>}, not $tag" "the bump PR may be unmerged"
+  fi
+
+  gl_project="https://gitlab.com/api/v4/projects/$(printf %s "$COMPONENT_GITLAB" | sed 's|/|%2F|g')"
+  if curl -fsS "$gl_project/repository/tags/$comp_tag" >/dev/null 2>&1; then
+    ok "tag $comp_tag is on gitlab.com as well as GitHub"
+  else
+    bad "tag $comp_tag is not on gitlab.com/$COMPONENT_GITLAB" \
+      "the mirror push did not happen; the catalog cannot see this release"
+  fi
+  if curl -fsS "$gl_project/releases/$comp_tag" >/dev/null 2>&1; then
+    ok "$comp_tag is released on gitlab.com (what the CI/CD Catalog lists)"
+  else
+    bad "gitlab.com/$COMPONENT_GITLAB has no release $comp_tag" \
+      "the mirror pipeline's release job did not run or failed"
+  fi
 fi
 
 # ------------------------------------------------------ server image --

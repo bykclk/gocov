@@ -235,6 +235,29 @@
     files: coverage.out
     token: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
     server: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
+    {{else if and (eq .Workspace.Forge "gitlab") .GitLabCatalog}}
+    <p class="sub">Then include the gocov component in your <code>.gitlab-ci.yml</code> &mdash; it
+    installs the pinned CLI (with checksum verification) and uploads the coverage file your test
+    job leaves as an artifact; the <code>workflow</code> rules run the pipeline on merge requests
+    and the default branch without duplicates:</p>
+    <pre><code id="snippet">include:
+  - component: gitlab.com/gocov/gocov/upload@1
+    inputs:
+      files: coverage.out
+      needs: [test]{{if not .ServerImplicit}}
+      server: {{.BaseURL}}{{end}}
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+test:
+  image: golang:1.23
+  script:
+    - go test ./... -covermode=atomic -coverprofile=coverage.out
+  artifacts:
+    paths: [coverage.out]</code></pre>
     {{else if eq .Workspace.Forge "gitlab"}}
     <p class="sub">Then add the coverage job to your <code>.gitlab-ci.yml</code> &mdash; the
     <code>workflow</code> rules run it on merge requests and the default branch without
