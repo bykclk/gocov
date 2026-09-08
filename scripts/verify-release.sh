@@ -60,7 +60,7 @@ if [ -z "$tag" ]; then
   [ -n "$tag" ] || { echo "verify-release: could not read the latest $CLI_REPO release" >&2; exit 2; }
 fi
 
-echo "verify-release: checking gocov $tag across three repos"
+echo "verify-release: checking gocov $tag across four repos"
 
 # Reads one file from a repo at a ref. Prints nothing and returns 1 when
 # the file or the ref is missing, so callers can report that themselves.

@@ -19,15 +19,17 @@ operational version of it. Read it if anything below disagrees with the repo.
 
 ## The shape of a release
 
-One release lands in three repositories and is, in the end, **three PR merges plus two
+One release lands in four repositories and is, in the end, **four PR merges plus two
 approval clicks**:
 
 1. `gocov` — a `Release-As:` PR states the version; release-please opens the real release
    PR; merging it tags `vX.Y.Z` and the tag build publishes binaries, the GHCR image, and
-   the two wrapper bump PRs, then waits for the production deploy approval.
+   the three wrapper bump PRs, then waits for the production deploy approval.
 2. `gocov-action` — merge its bump PR; that *is* its release (tags next minor, moves `v1`).
 3. `upload-pipe` — merge its bump PR; that *is* its release (Docker Hub multi-arch + the
    Bitbucket mirror push).
+4. `gitlab-component` — merge its bump PR; that *is* its release (tags next minor, GitHub
+   release, mirror push to gitlab.com whose pipeline publishes the CI/CD Catalog release).
 
 Version numbers are **stated, never inferred** — commit subjects here are English
 sentences, not `feat:`/`fix:`, so release-please only does PR/CHANGELOG/pin work.
@@ -117,7 +119,7 @@ Two human gates in this run, both the user's click:
   `/healthz` plus a real upload from `gocov/smoke`.
 
 The build publishes: 10 binaries + `checksums.txt` on the release, the GHCR server image
-(`vX.Y.Z`, `X.Y`, `latest`), and the two wrapper bump PRs.
+(`vX.Y.Z`, `X.Y`, `latest`), and the three wrapper bump PRs.
 
 ## When the release contains a server-side feature the wrappers use
 
@@ -137,13 +139,15 @@ appear.
 ## Step 4 — The wrappers
 
 ```sh
-gh pr list --repo gocov/gocov-action --label release
-gh pr list --repo gocov/upload-pipe  --label release
+gh pr list --repo gocov/gocov-action     --label release
+gh pr list --repo gocov/upload-pipe      --label release
+gh pr list --repo gocov/gitlab-component --label release
 ```
 
 Merging each one **is** that wrapper's release. Merge the action's first (its `v1` is what
-most users track), then the pipe's. If a bump PR never appeared, the App token step in
-`release.yml` failed — read that job's log before opening anything by hand.
+most users track), then the pipe's, then the component's. If a bump PR never appeared, the
+App token step in `release.yml` failed — read that job's log before opening anything by
+hand (the App must be installed on all three wrapper repos).
 
 ## Step 5 — Verify
 
@@ -151,11 +155,12 @@ most users track), then the pipe's. If a bump PR never appeared, the App token s
 scripts/verify-release.sh v<VERSION>
 ```
 
-16/16 is the expected result once the wrappers are merged and their builds are done. Before
+23/23 is the expected result once the wrappers are merged and their builds are done (the
+pipe's multi-arch image and the component's GitLab pipeline take a few minutes). Before
 that, the wrapper checks are legitimately behind — that is why the `verify-release`
 workflow reports rather than fails on `release: published`.
 
-Give the user a final summary: the version, the three merged PRs, the deploy result, and
+Give the user a final summary: the version, the four merged PRs, the deploy result, and
 the verify score.
 
 ## Gotchas worth remembering
@@ -185,5 +190,5 @@ the verify score.
   run, poll `gh api repos/gocov/gocov/actions/runs/<id> --jq .status` in a background Bash
   loop until it reads `waiting` (the deploy gate) or `completed`.
 - `verify-release.sh` skips its two "open the image and read its version" checks when
-  Docker is not running locally — that is 14/0/2, not a failure. For a true 16/16, dispatch
+  Docker is not running locally — that is 21/0/2, not a failure. For a true 23/23, dispatch
   the workflow instead: `gh workflow run verify-release.yml -f tag=v<VERSION>`.
