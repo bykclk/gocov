@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.24.0](https://github.com/gocov/gocov/compare/v0.23.0...v0.24.0) (2026-09-08)
+
+
+### Features
+
+* GitLab CI/CD Catalog component in the docs, the wizard and the release flow ([#131](https://github.com/gocov/gocov/issues/131)) ([aa0db9e](https://github.com/gocov/gocov/commit/aa0db9e956bc7ed7c263171264d85c2152ea1876))
+* onboarding product events for the analytics snippet ([#125](https://github.com/gocov/gocov/issues/125)) ([099b8fc](https://github.com/gocov/gocov/commit/099b8fc16d028febc8233f942bc107bf32edc353))
+* self-host on-ramp for the production compose file ([#130](https://github.com/gocov/gocov/issues/130)) ([9ed8579](https://github.com/gocov/gocov/commit/9ed857972dcf58e74c887ef8a33bc99f66b9fca1))
+
+
+### Bug Fixes
+
+* send click events over sendBeacon before the page navigates ([#127](https://github.com/gocov/gocov/issues/127)) ([cd907bf](https://github.com/gocov/gocov/commit/cd907bfdd0223afe2bffe71bb26b33b09c809a4e))
+* stop the memory store aliasing user forge-workspace snapshots ([#128](https://github.com/gocov/gocov/issues/128)) ([d66ec65](https://github.com/gocov/gocov/commit/d66ec658e42cd9d684e75f5615c9d54af6bce8f5))
+
 ## [0.23.0](https://github.com/gocov/gocov/compare/v0.22.0...v0.23.0) (2026-09-06)
 
 
