@@ -57,11 +57,13 @@ jobs:
     # grants, so everything release.yml's jobs need is named here: the
     # release itself (contents), the GHCR push (packages), the deploy
     # role and the provenance signing (id-token), the provenance itself
-    # (attestations). Same for secrets — without inherit, the deploy
-    # smoke test would run without its upload token.
+    # (attestations), the image's storage record (artifact-metadata). Same
+    # for secrets — without inherit, the deploy smoke test would run
+    # without its upload token.
     secrets: inherit
     permissions:
       contents: write
       packages: write
       id-token: write
       attestations: write
+      artifact-metadata: write
