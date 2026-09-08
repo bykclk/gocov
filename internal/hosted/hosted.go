@@ -16,4 +16,4 @@ const DefaultServer = "https://app.gocov.dev"
 // renders. They are prose and HTML rather than code, so nothing but a test
 // can keep them honest: bump this constant on release and
 // TestPinnedCLIVersionIsInSync names every file still on the old one.
-const PinnedCLIVersion = "v0.24.0" // x-release-please-version
+const PinnedCLIVersion = "v0.25.0" // x-release-please-version

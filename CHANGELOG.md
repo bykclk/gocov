@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.25.0](https://github.com/gocov/gocov/compare/v0.24.0...v0.25.0) (2026-09-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* report, badge and settings URLs changed shape; README badges need the new form. No redirects from the old URLs.
+
+### Features
+
+* scope repo slugs and workspace prefixes per forge ([#137](https://github.com/gocov/gocov/issues/137)) ([55e5cc2](https://github.com/gocov/gocov/commit/55e5cc22e50496ce9ef85cc3daf78a3611181adc))
+* the setup wizard leads with OIDC identity tokens instead of the upload token ([#134](https://github.com/gocov/gocov/issues/134)) ([9769d50](https://github.com/gocov/gocov/commit/9769d5081c6bbbe4c534a67c75d7a215ae4c9f55))
+
+
+### Miscellaneous Chores
+
+* release 0.25.0 ([#138](https://github.com/gocov/gocov/issues/138)) ([732f141](https://github.com/gocov/gocov/commit/732f141828e76b3d3d9fd035c5fef344a5ca2134))
+
 ## [0.24.0](https://github.com/gocov/gocov/compare/v0.23.0...v0.24.0) (2026-09-08)
 
 
