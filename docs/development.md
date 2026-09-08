@@ -84,17 +84,20 @@ on a PR rather than a tag that has to be burned.
 ### The wrappers follow by themselves
 
 The release build also opens a bump PR in each wrapper, authored by the cross-repo App (installed on exactly those
-two repos): gocov-action's pins the CLI its `action.yml` installs; upload-pipe's bakes the CLI into the image and
-bumps `pipe.yml` and the CHANGELOG. Each PR carries the `release` label, and merging it **is** that wrapper's
-release: a `tag-on-release-merge` workflow tags the merge commit (the action computes its next minor from its tags;
-the pipe reads its version from `pipe.yml`) and runs that repo's release workflow — the action's release moves
-`v1`, the pipe's builds the multi-arch image for Docker Hub. So a full release across all three repos is three PR
-merges and nothing else; between the gocov release and the wrapper merges, `verify-release` reports the wrappers as
-behind, which is true.
+three repos): gocov-action's pins the CLI its `action.yml` installs; upload-pipe's bakes the CLI into the image and
+bumps `pipe.yml` and the CHANGELOG; gitlab-component's bumps the `version` default in `templates/upload.yml`, the
+README and the CHANGELOG. Each PR carries the `release` label, and merging it **is** that wrapper's release: a
+`tag-on-release-merge` workflow tags the merge commit (the action and the component compute their next minor from
+their tags; the pipe reads its version from `pipe.yml`) and runs that repo's release workflow — the action's release
+moves `v1`, the pipe's builds the multi-arch image for Docker Hub, the component's mirrors the tag to gitlab.com,
+where the project's own pipeline creates the release the CI/CD Catalog lists. So a full release across all four
+repos is four PR merges and nothing else; between the gocov release and the wrapper merges, `verify-release` reports
+the wrappers as behind, which is true.
 
-The pipe's Bitbucket mirror is the one seam: its tag workflow pushes the mirror only when the
-`BITBUCKET_MIRROR_USERNAME`/`BITBUCKET_MIRROR_APP_PASSWORD` secrets are set, and warns instead of failing when they
-are not — the Atlassian catalog reads the Bitbucket repo, and verify-release checks the tag landed there.
+The mirrors are the seams. The pipe's tag workflow pushes Bitbucket only when the
+`BITBUCKET_MIRROR_USERNAME`/`BITBUCKET_MIRROR_APP_PASSWORD` secrets are set, the component's pushes gitlab.com only
+when `GITLAB_MIRROR_TOKEN` is, and both warn instead of failing when they are not — the Atlassian catalog reads the
+Bitbucket repo and the GitLab catalog reads the gitlab.com project, so verify-release checks the tags landed there.
 
 ### Where the version is written down
 
@@ -123,10 +126,11 @@ scripts/verify-release.sh v0.12.0    # a specific one
 
 It confirms that the ten binaries and `checksums.txt` are on the release, that the checksums cover every binary and
 that the release and the server image carry a build provenance attestation from this repository,
-that this repo's snippets and both wrappers name the released CLI, that `gocov-action@v1` resolves to the newest
+that this repo's snippets and all three wrappers name the released CLI, that `gocov-action@v1` resolves to the newest
 action release, that the pipe image is on Docker Hub and the server image on GHCR for both architectures, and that
-both images actually report the right version when opened. It also checks the pipe's tag reached Bitbucket as well as GitHub — that repo
-releases through two remotes, and a tag that lands on only one publishes nothing on the other silently. It needs
+both images actually report the right version when opened. It also checks the pipe's tag reached Bitbucket and the
+component's tag and release reached gitlab.com — those repos release through two remotes, and a tag that lands on
+only one publishes nothing on the other silently. It needs
 `gh`, `curl` and `jq`; `docker` is optional and only the last check needs it.
 
 The `verify-release` workflow runs it weekly and on demand. It also runs on every published release, where it

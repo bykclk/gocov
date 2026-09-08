@@ -231,10 +231,15 @@ func (s *Server) setupViewData(r *http.Request, ws *store.Workspace, owner bool)
 		// When this instance is the public hosted service the CLI already
 		// defaults to it, so onboarding drops GOCOV_SERVER (D: ServerImplicit).
 		"ServerImplicit": baseURL == hosted.DefaultServer,
-		"Repos":          repos,
-		"Owner":          owner,
-		"Token":          "",
-		"TokenMasked":    "",
+		// The GitLab CI/CD Catalog component lives on gitlab.com, and a
+		// self-managed instance cannot include it from there: the wizard
+		// offers the component only when this server trusts gitlab.com's
+		// OIDC issuer, i.e. when its GitLab is gitlab.com.
+		"GitLabCatalog": s.gitlabIssuers[gitLabDotComIssuer],
+		"Repos":         repos,
+		"Owner":         owner,
+		"Token":         "",
+		"TokenMasked":   "",
 	}
 	if owner {
 		data["Token"] = ws.Token
