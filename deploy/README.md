@@ -1,4 +1,34 @@
-# Hosted deployment (app.gocov.dev)
+# Deploying gocov
+
+Two things live here: the compose stack a self-hoster runs, and the notes
+for gocov's own hosted instance. Both run the same image,
+`ghcr.io/gocov/gocov-server`, pinned to an exact release.
+
+## Self-hosting: `docker-compose.prod.yml`
+
+The server behind a Caddy TLS terminator, with Postgres either external or
+bundled. From this directory:
+
+1. `cp .env.example .env` and fill in the four required values: the
+   release to run, your hostname, the public URL and a secret key
+   (`openssl rand -hex 32`).
+2. Point the hostname's DNS at this machine and open 80 and 443. Caddy
+   obtains and renews the certificate itself.
+3. Either put your Postgres DSN in `DATABASE_URL`, or uncomment the three
+   bundled-Postgres lines (`COMPOSE_PROFILES=db`, a password, and the DSN
+   that goes with it) to run Postgres 18 here, in a named volume.
+4. `docker compose -f docker-compose.prod.yml up -d`, then open the URL:
+   migrations apply themselves, and the onboarding wizard takes it from
+   there once [sign-in](../docs/sign-in.md) is enabled.
+
+Upgrading is editing `GOCOV_VERSION` in `.env`, then
+`docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d`.
+Every release brings this stack up from the freshly published image with
+the bundled Postgres and checks it answers through Caddy, so the path does
+not rot. The operator's guide — TLS, the secret key, the GitHub App key,
+backups, upgrades — is [docs/self-hosting.md](../docs/self-hosting.md).
+
+## Hosted deployment (app.gocov.dev)
 
 One Fargate task running `ghcr.io/gocov/gocov-server` behind an Application
 Load Balancer, in front of an RDS Postgres. Cloudflare proxies the hostname
@@ -11,7 +41,7 @@ EC2 instance running [`docker-compose.prod.yml`](docker-compose.prod.yml)
 plus Caddy; that file stays as the self-host starting point and is smoked
 on every release.)
 
-## What runs where (eu-central-1)
+### What runs where (eu-central-1)
 
 | Piece | Name | Notes |
 |---|---|---|
@@ -28,7 +58,7 @@ on every release.)
 | IAM | `gocov-ecs-execution` (task execution: logs, `/gocov/*` parameters) · `gocov-deploy` (the workflow's OIDC role) | The task itself has no AWS role: the server calls no AWS API. |
 | DNS (Cloudflare) | `app.gocov.dev` → CNAME to the ALB, proxied | One name. Full (strict): Cloudflare verifies the ACM certificate on the ALB. |
 
-## Configuration
+### Configuration
 
 Every variable the server reads is a SecureString parameter named
 `/gocov/<VARIABLE>`; at deploy time `deploy.yml` lists the names under
@@ -42,7 +72,7 @@ a parameter with the same name would override one.
 - **Turn a forge off**: delete its parameters, then deploy. A missing parameter is not an empty variable — the template never mentions names, so removing the parameter removes the variable.
 - The GitHub App private key is the PEM itself in `GOCOV_GITHUB_APP_PRIVATE_KEY`; the server accepts either a path or the key, and a parameter cannot be a file.
 
-## Deploys
+### Deploys
 
 Every release deploys itself: `release.yml` builds the multi-arch image,
 pushes it to GHCR, then calls `deploy.yml`, which waits on the
@@ -71,7 +101,7 @@ Migrations are forward-only, so rolling the image back never rolls the
 schema back; if the schema itself is suspect, that is RDS point-in-time
 recovery, not a redeploy.
 
-## Operating it
+### Operating it
 
 - **Logs**: `aws logs tail /gocov/server --follow` (or `--since 1h`).
 - **What is running**: `aws ecs describe-services --cluster gocov --services gocov-server --query 'services[0].deployments'`.
@@ -81,7 +111,7 @@ recovery, not a redeploy.
 - **Resize**: `cpu`/`memory` in the task template (then a deploy), `--desired-count` on the service. Horizontal scale is *possible* — the locks above are what made it so — but not needed at this load.
 - **Cost** (approx., ARM Fargate): task ≈ $15/month, ALB ≈ $20 + its three public IPv4 (one per subnet) ≈ $11, task IPv4 ≈ $4, logs ≈ $1–3. About $30–35/month more than the instance was, bought against: no machine to patch, no disk or Docker log to fill, deploy and rollback in a minute, and a rolling deploy instead of a restart gap.
 
-## One-time setup
+### One-time setup
 
 Everything below was done once; it is here so it can be redone or read.
 Region `eu-central-1`, account `773658094601`, default VPC. Shell
@@ -267,7 +297,7 @@ invisible to users. The instance was then stopped, terminated, and its
 Elastic IP, `gocov-web` security group, `gocov-ec2` role and the
 `gocov-deploy` SSM policy removed.)
 
-### GitHub side
+#### GitHub side
 
 - **GHCR package public**: the first push of `ghcr.io/gocov/gocov-server`
   creates a private package — make it public (package settings) and link

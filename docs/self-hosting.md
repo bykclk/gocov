@@ -51,11 +51,20 @@ The footprint is modest. gocov's own hosted instance is one 0.5 vCPU / 1 GB arm6
 balancer, in front of a 2 vCPU / 1 GB managed Postgres — and until it moved there it ran the compose file below on a
 single 2 vCPU / 2 GB VM.
 
-The repo ships a starting point for this shape under `deploy/`: `docker-compose.prod.yml` pulls the published image at
-the version pinned in `.env` and runs it behind a Caddy TLS terminator, expecting Postgres to be external; the
-`Caddyfile` next to it is the one quoted below. The root `docker-compose.yml` is the evaluation stack and is not the
-same thing — it brings its own Postgres and builds from source; every release brings it up from the freshly published
-image instead and checks it answers, so the compose path does not rot.
+The repo ships that shape ready to run under `deploy/`: `docker-compose.prod.yml` pulls the published image at the
+version pinned in `.env` and runs it behind a Caddy TLS terminator, with Postgres either external or bundled. From
+that directory:
+
+1. `cp .env.example .env` and fill in the four required values: the release to run, your hostname, the public
+   `https://` URL and a secret key (`openssl rand -hex 32`). Every other setting is listed there, commented out.
+2. Point the hostname's DNS at the machine and open 80 and 443. Caddy obtains and renews the certificate itself;
+   the `Caddyfile` next to the compose file is the one quoted below.
+3. Put your Postgres DSN in `DATABASE_URL`, or turn on the bundled one (see [Postgres](#postgres)).
+4. `docker compose -f docker-compose.prod.yml up -d`.
+
+The root `docker-compose.yml` is the evaluation stack and is not the same thing — it brings its own Postgres and builds
+from source. Every release brings both up from the freshly published image and checks they answer, so neither compose
+path rots.
 
 ## TLS and the reverse proxy
 
@@ -89,9 +98,21 @@ gocov.example.com {
 
 ## Postgres
 
-Bring your own: the DSN goes in `DATABASE_URL`, and connection options such as `sslmode=require` go in the URL. The
-Postgres in `docker-compose.yml` is for evaluation only — fixed development credentials, a container volume, the same
-host as the app.
+Bring your own: the DSN goes in `DATABASE_URL`, and connection options such as `sslmode=require` go in the URL. A
+managed Postgres gives you backups, failover and a disk that is not the app's disk, and gocov's own hosted instance
+runs on one.
+
+For a small instance the production compose file can run Postgres itself: uncomment `COMPOSE_PROFILES=db`,
+`POSTGRES_PASSWORD` and the matching `DATABASE_URL` in `.env`. That is Postgres 18 in a named volume on the same host,
+reachable only inside the compose network — nothing is published on 5432. It is a real deployment, not the evaluation
+stack, but the backup is now yours to take:
+
+```sh
+docker compose -f docker-compose.prod.yml exec db pg_dump -U gocov gocov > gocov-$(date +%F).sql
+```
+
+Restore into an empty database with `psql`, start the server against it, and the secret key from the same era, and
+everything is back — the raw uploads included, since they live in Postgres too.
 
 Migrations are embedded in the binary and applied at start-up, in filename order, tracked in a `schema_migrations`
 table. A deploy is therefore "new image, restart", never a separate migrate step — but the database user does need DDL
@@ -119,7 +140,8 @@ workspace has to reconnect by hand.
 ## The GitHub App private key
 
 `GOCOV_GITHUB_APP_PRIVATE_KEY` takes either PEM content or a path to the PEM file. In a container the path plus a
-read-only mount is easier to live with than a multi-line environment variable.
+read-only mount is easier to live with than a multi-line environment variable, which is how the production compose
+file does it: `GOCOV_GITHUB_APP_KEY_FILE=./github-app.pem` in `.env` mounts that file and hands the server its path.
 
 The container runs as uid 65532 and the server exits when it cannot read a key it was configured with, so wrong
 ownership is a crash loop rather than a missing feature. Keep the file `600` and give it to that uid instead of opening
@@ -179,7 +201,7 @@ show you the boot log.
 
 A restart is the one place the shutdown budget shows. `SIGTERM` drains in-flight requests for up to 15 seconds, which
 is longer than Docker's 10-second default stop timeout — raise `stop_grace_period` above it, or a rolling restart will
-cut an upload in half. Kubernetes' 30-second default already clears it.
+cut an upload in half. The production compose file sets 20 seconds; Kubernetes' 30-second default already clears it.
 
 `gocov-server version` reports what is actually running — the published image is stamped with its release tag, and a
 build of your own derives the version from git when

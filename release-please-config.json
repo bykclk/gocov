@@ -9,7 +9,8 @@
         "docs/ci-other.md",
         "docs/self-hosting.md",
         "internal/server/templates/onboarding.html",
-        "internal/hosted/hosted.go"
+        "internal/hosted/hosted.go",
+        "deploy/.env.example"
       ]
     }
   }
