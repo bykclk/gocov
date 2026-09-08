@@ -16,7 +16,7 @@ release workflow from the tagged commit. Pin a version, and cache the download o
 
 <!-- x-release-please-start-version -->
 ```sh
-ver=v0.23.0
+ver=v0.24.0
 arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; esac
 bin="$HOME/.cache/gocov/gocov-$ver-linux-$arch"
 if [ ! -x "$bin" ]; then
