@@ -56,10 +56,12 @@ jobs:
     # A called workflow can never hold more permission than its caller
     # grants, so everything release.yml's jobs need is named here: the
     # release itself (contents), the GHCR push (packages), the deploy
-    # role (id-token). Same for secrets — without inherit, the deploy
+    # role and the provenance signing (id-token), the provenance itself
+    # (attestations). Same for secrets — without inherit, the deploy
     # smoke test would run without its upload token.
     secrets: inherit
     permissions:
       contents: write
       packages: write
       id-token: write
+      attestations: write

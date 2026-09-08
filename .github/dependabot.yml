@@ -1,12 +1,43 @@
-# Keeps the workflows' action pins current — GitHub deprecates a Node
-# runtime every year or so, and every action we use has to be bumped a
-# major to follow it. One grouped PR a week instead of a warning per job.
+# One grouped PR a week per ecosystem, so an update is a review rather
+# than a stream of notifications.
 version: 2
 updates:
+  # Workflow action pins — GitHub deprecates a Node runtime every year or
+  # so, and every action we use has to be bumped a major to follow it.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     groups:
       actions:
+        patterns: ["*"]
+
+  # The two direct Go dependencies (pgx, caarlos0/env) and their
+  # transitive set. pgx is the one that matters: it is the database
+  # driver, and its fixes are the kind that only show up in production.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go:
+        patterns: ["*"]
+
+  # Image bases: the Go toolchain and distroless in the Dockerfile, the
+  # Postgres tag in the compose files. A Go patch release usually carries
+  # security fixes, and the Dockerfile's tag is where the released server
+  # binary's toolchain is actually chosen.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      images:
+        patterns: ["*"]
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      images:
         patterns: ["*"]

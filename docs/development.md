@@ -68,7 +68,7 @@ git push -u origin release-0.14.0
 
 [release-please](https://github.com/googleapis/release-please) picks that up and opens a release pull request
 holding the version, the CHANGELOG entry and the bumped install-snippet pins. Read it, then merge it: merging tags
-`v0.13.0`, and the tag's build publishes the ten binaries and `checksums.txt`.
+`v0.13.0`, and the tag's build publishes the ten binaries and `checksums.txt`, each with a build provenance attestation.
 
 The version is stated rather than inferred on purpose. release-please normally derives it from `feat:`/`fix:`
 commit prefixes, and this repo writes commit subjects as English sentences instead — a convention worth more than
@@ -121,7 +121,8 @@ scripts/verify-release.sh            # the newest release
 scripts/verify-release.sh v0.12.0    # a specific one
 ```
 
-It confirms that the ten binaries and `checksums.txt` are on the release and that the checksums cover every binary,
+It confirms that the ten binaries and `checksums.txt` are on the release, that the checksums cover every binary and
+that the release and the server image carry a build provenance attestation from this repository,
 that this repo's snippets and both wrappers name the released CLI, that `gocov-action@v1` resolves to the newest
 action release, that the pipe image is on Docker Hub and the server image on GHCR for both architectures, and that
 both images actually report the right version when opened. It also checks the pipe's tag reached Bitbucket as well as GitHub — that repo

@@ -10,7 +10,9 @@ self-hosting, `GOCOV_SERVER`.
 ## Prebuilt binaries
 
 Every release ships static binaries for linux, darwin and windows on amd64 and arm64, with `checksums.txt` alongside —
-no toolchain needed. Pin a version, and cache the download on self-hosted runners:
+no toolchain needed. Each file also carries a signed build provenance attestation, so
+`gh attestation verify gocov-linux-amd64 --repo gocov/gocov` proves the download was built by this repository's
+release workflow from the tagged commit. Pin a version, and cache the download on self-hosted runners:
 
 <!-- x-release-please-start-version -->
 ```sh
