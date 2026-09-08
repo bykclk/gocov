@@ -117,6 +117,11 @@ jobs:
       packages: write
       id-token: write
       attestations: write
+      # attest-build-provenance also files an artifact-metadata storage
+      # record for a registry-pushed image (which registry, which version),
+      # listed under https://github.com/orgs/gocov/artifacts. Without this
+      # the record fails and the step warns on every release.
+      artifact-metadata: write
     env:
       # inputs.tag is empty unless this workflow was called with one; the
       # fallback keeps the hand-pushed-tag path working.
