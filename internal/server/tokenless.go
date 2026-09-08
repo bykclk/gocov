@@ -120,7 +120,7 @@ func (s *Server) authTokenless(w http.ResponseWriter, r *http.Request) (*tokenle
 
 	// The repo must already be tracked: tokenless callers are anonymous
 	// and may not register anything.
-	repo, err := s.store.RepoBySlug(ctx, claim.RepoSlug)
+	repo, err := s.store.RepoBySlug(ctx, "github", claim.RepoSlug)
 	if errors.Is(err, store.ErrNotFound) {
 		httpError(w, http.StatusNotFound, "repo %q is not tracked on this server; tokenless uploads cannot register repos", claim.RepoSlug)
 		return nil, nil, false

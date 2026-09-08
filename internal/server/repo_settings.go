@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/gocov/gocov/internal/core"
@@ -19,75 +18,68 @@ import (
 // pages do not exist. Within the workspace the same split as the
 // workspace page applies: members read, owners change.
 
-// memberRepo resolves the {slug} path segment to a repo whose owning
-// workspace the signed-in user belongs to, writing a 404 otherwise. It
-// returns the repo, the matched workspace prefix (for back-links and
-// crumbs) and the user's role there. The slug rides as a single escaped
-// segment because repo slugs contain slashes; the router decodes it via
-// PathValue.
-func (s *Server) memberRepo(w http.ResponseWriter, r *http.Request) (*store.Repo, string, store.Role) {
+// memberRepo resolves the {forge}/{slug...} path segments to a repo whose
+// owning workspace the signed-in user belongs to, writing a 404
+// otherwise. It returns the repo, that workspace (for back-links and
+// crumbs) and the user's role there.
+func (s *Server) memberRepo(w http.ResponseWriter, r *http.Request) (*store.Repo, *store.Workspace, store.Role) {
 	u := s.signedIn(w, r)
 	if u == nil {
-		return nil, "", ""
+		return nil, nil, ""
 	}
-	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("slug"))
+	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
-		return nil, "", ""
+		return nil, nil, ""
 	}
 	if err != nil {
 		s.internalError(w, "loading repo", err)
-		return nil, "", ""
+		return nil, nil, ""
 	}
 	memberOf, err := s.store.ListWorkspacesForUser(r.Context(), u.ID)
 	if err != nil {
 		s.internalError(w, "listing memberships", err)
-		return nil, "", ""
+		return nil, nil, ""
 	}
-	// The most specific workspace the user belongs to that owns this repo.
-	for _, prefix := range core.SlugPrefixes(repo.Slug) { // longest first
-		for _, ws := range memberOf {
-			if ws.Forge == repo.Forge && ws.Prefix == prefix {
-				role, _, err := s.seat(r.Context(), u, ws)
-				if err != nil {
-					s.internalError(w, "listing memberships", err)
-					return nil, "", ""
-				}
-				return repo, prefix, role
-			}
-		}
+	ws := owningWorkspace(repo, memberOf)
+	if ws == nil {
+		http.NotFound(w, r)
+		return nil, nil, ""
 	}
-	http.NotFound(w, r)
-	return nil, "", ""
+	role, _, err := s.seat(r.Context(), u, ws)
+	if err != nil {
+		s.internalError(w, "listing memberships", err)
+		return nil, nil, ""
+	}
+	return repo, ws, role
 }
 
 // ownerRepo is memberRepo for the owner-only routes: a member who is not
 // an owner gets a 403 instead.
-func (s *Server) ownerRepo(w http.ResponseWriter, r *http.Request) (*store.Repo, string) {
-	repo, prefix, role := s.memberRepo(w, r)
+func (s *Server) ownerRepo(w http.ResponseWriter, r *http.Request) (*store.Repo, *store.Workspace) {
+	repo, ws, role := s.memberRepo(w, r)
 	if repo == nil {
-		return nil, ""
+		return nil, nil
 	}
 	if role != store.RoleOwner {
 		ownersOnly(w)
-		return nil, ""
+		return nil, nil
 	}
-	return repo, prefix
+	return repo, ws
 }
 
 // repoSettingsData assembles the template payload. The upload token lives on
 // the repo row in the clear, so exposing it to owners (Reveal) leaks nothing
 // the DB does not already hold; MaskedToken is the default rendering. A
 // member's page carries neither.
-func (s *Server) repoSettingsData(repo *store.Repo, wsPrefix string, owner bool, newToken, notice, errMsg string) map[string]any {
+func (s *Server) repoSettingsData(repo *store.Repo, ws *store.Workspace, owner bool, newToken, notice, errMsg string) map[string]any {
 	token, masked := "", ""
 	if owner {
 		token, masked = repo.Token, maskSecret(repo.Token)
 	}
 	return map[string]any{
 		"Repo":              repo,
-		"WSPrefix":          wsPrefix,
-		"WSPrefixEsc":       url.PathEscape(wsPrefix),
+		"Workspace":         ws,
 		"Owner":             owner,
 		"Token":             token,
 		"MaskedToken":       masked,
@@ -96,7 +88,7 @@ func (s *Server) repoSettingsData(repo *store.Repo, wsPrefix string, owner bool,
 		"Error":             errMsg,
 		"GateActive":        gateActiveCount(repo.Gate),
 		"IgnorePaths":       strings.Join(repo.IgnorePaths, "\n"),
-		"BadgeMarkdown":     s.badgeMarkdown(repo.Slug),
+		"BadgeMarkdown":     s.badgeMarkdown(repo),
 		"ShowPublicReports": s.publicReportsSwitch(repo),
 	}
 }
@@ -106,9 +98,9 @@ func (s *Server) repoSettingsData(repo *store.Repo, wsPrefix string, owner bool,
 // The badge links to the repo page: for a public repo that is a report any
 // README reader can open, for a private one the login wall answers as it
 // always did.
-func (s *Server) badgeMarkdown(slug string) string {
+func (s *Server) badgeMarkdown(repo *store.Repo) string {
 	base := strings.TrimSuffix(s.baseURL, "/")
-	return fmt.Sprintf("[![coverage](%s/badge/%s.svg)](%s/repos/%s?ref=badge)", base, slug, base, slug)
+	return fmt.Sprintf("[![coverage](%s%s)](%s%s?ref=badge)", base, badgeURL(repo), base, repoURL(repo))
 }
 
 // publicReportsSwitch reports whether the repo-settings "Public reports"
@@ -119,9 +111,9 @@ func (s *Server) publicReportsSwitch(repo *store.Repo) bool {
 	return s.publicReports && repo.Visibility == store.VisibilityPublic
 }
 
-// handleRepoSettings implements GET /repo-settings/{slug}.
+// handleRepoSettings implements GET /repo-settings/{forge}/{slug...}.
 func (s *Server) handleRepoSettings(w http.ResponseWriter, r *http.Request) {
-	repo, prefix, role := s.memberRepo(w, r)
+	repo, ws, role := s.memberRepo(w, r)
 	if repo == nil {
 		return
 	}
@@ -129,29 +121,29 @@ func (s *Server) handleRepoSettings(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("saved") == "1" {
 		notice = "Saved."
 	}
-	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, prefix, role == store.RoleOwner, "", notice, ""))
+	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, ws, role == store.RoleOwner, "", notice, ""))
 }
 
-// handleRepoSettingsSave implements POST /repo-settings/{slug}/save: the base
+// handleRepoSettingsSave implements POST /repo-settings/save/{forge}/{slug...}: the base
 // branch, coverage gates and ignore patterns for this repository.
 func (s *Server) handleRepoSettingsSave(w http.ResponseWriter, r *http.Request) {
-	repo, prefix := s.ownerRepo(w, r)
+	repo, ws := s.ownerRepo(w, r)
 	if repo == nil {
 		return
 	}
 	branch := strings.TrimSpace(r.FormValue("default_branch"))
 	if branch == "" {
-		s.repoSettingsError(w, r, repo, prefix, "Base branch cannot be empty.")
+		s.repoSettingsError(w, r, repo, ws, "Base branch cannot be empty.")
 		return
 	}
 	gate, errLabel := parseGateForm(r)
 	if errLabel != "" {
-		s.repoSettingsError(w, r, repo, prefix, errLabel)
+		s.repoSettingsError(w, r, repo, ws, errLabel)
 		return
 	}
 	ignorePaths := ignore.Parse(r.FormValue("ignore_paths"))
 	if err := ignore.Validate(ignorePaths); err != nil {
-		s.repoSettingsError(w, r, repo, prefix, "Ignored files not saved: "+err.Error()+".")
+		s.repoSettingsError(w, r, repo, ws, "Ignored files not saved: "+err.Error()+".")
 		return
 	}
 	repo.DefaultBranch = branch
@@ -167,14 +159,14 @@ func (s *Server) handleRepoSettingsSave(w http.ResponseWriter, r *http.Request) 
 		s.internalError(w, "updating repo", err)
 		return
 	}
-	http.Redirect(w, r, "/repo-settings/"+repo.Slug+"?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, repoSettingsURL(repo, "")+"?saved=1", http.StatusSeeOther)
 }
 
-// handleRepoRotateToken implements POST /repo-settings/{slug}/rotate-token.
+// handleRepoRotateToken implements POST /repo-settings/rotate-token/{forge}/{slug...}.
 // The new token is shown once; the old one is dead by the time the page
 // renders (single UPDATE, no grace period).
 func (s *Server) handleRepoRotateToken(w http.ResponseWriter, r *http.Request) {
-	repo, prefix := s.ownerRepo(w, r)
+	repo, ws := s.ownerRepo(w, r)
 	if repo == nil {
 		return
 	}
@@ -189,15 +181,15 @@ func (s *Server) handleRepoRotateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("repo token rotated", "slug", repo.Slug, "user", currentUser(r).DisplayName)
-	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, prefix, true, token,
+	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, ws, true, token,
 		"Token rotated — the previous token no longer works. Update your CI variable.", ""))
 }
 
-// handleRepoDelete implements POST /repo-settings/{slug}/delete: it removes the
+// handleRepoDelete implements POST /repo-settings/delete/{forge}/{slug...}: it removes the
 // repo and cascades its uploads and reports (the store does the cascade).
 // Uploads with the token start failing at once; nothing is changed on the forge.
 func (s *Server) handleRepoDelete(w http.ResponseWriter, r *http.Request) {
-	repo, prefix := s.ownerRepo(w, r)
+	repo, ws := s.ownerRepo(w, r)
 	if repo == nil {
 		return
 	}
@@ -206,12 +198,12 @@ func (s *Server) handleRepoDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("repo deleted", "slug", repo.Slug, "user", currentUser(r).DisplayName)
-	http.Redirect(w, r, workspaceURL(prefix, ""), http.StatusSeeOther)
+	http.Redirect(w, r, workspaceURL(ws, ""), http.StatusSeeOther)
 }
 
 // repoSettingsError re-renders the settings page with a validation message.
 // Only an owner's save can fail validation, so the page is an owner's.
-func (s *Server) repoSettingsError(w http.ResponseWriter, r *http.Request, repo *store.Repo, prefix, msg string) {
+func (s *Server) repoSettingsError(w http.ResponseWriter, r *http.Request, repo *store.Repo, ws *store.Workspace, msg string) {
 	w.WriteHeader(http.StatusBadRequest)
-	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, prefix, true, "", "", msg))
+	s.render(w, r, "repo-settings.html", s.repoSettingsData(repo, ws, true, "", "", msg))
 }

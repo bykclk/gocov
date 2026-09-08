@@ -60,12 +60,14 @@ same `(run_id, run_attempt, part)` already uploaded, `429` past the per-repo hou
 ## Badge
 
 ```markdown
-[![coverage](https://app.gocov.dev/badge/myworkspace/myrepo.svg)](https://app.gocov.dev/repos/myworkspace/myrepo?ref=badge)
+[![coverage](https://app.gocov.dev/badge/github/myworkspace/myrepo.svg)](https://app.gocov.dev/repos/github/myworkspace/myrepo?ref=badge)
 ```
 
 The link lands on the repo's report page — for a public repo that is a [page anyone can read](public-reports.md);
-on a private repo, visitors get the sign-in page. A self-hosted instance serves the same paths from its own host.
-Either way there is nothing to assemble by hand: the repo page shows the finished snippet with a copy button.
+on a private repo, visitors get the sign-in page. The path names the forge first (`github`, `gitlab` or
+`bitbucket`), then the workspace and repo as the forge spells them: a project mirrored to two forges has two report
+pages. A self-hosted instance serves the same paths from its own host. Either way there is nothing to assemble by
+hand: the repo page shows the finished snippet with a copy button.
 
 Red below 50%, yellow 50–75%, green above 75%. Shows the latest upload on the repo's default branch. Badges are served
 without authentication even when web UI sign-in is enabled.

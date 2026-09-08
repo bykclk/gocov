@@ -69,40 +69,42 @@ func connectGrantFor(forgeName string) *connectGrant {
 	return nil
 }
 
-// handleConnect implements GET /workspaces/{prefix}/{forge}/connect:
-// the start of the connect grant — state cookie, then the forge's
-// consent page.
-func (s *Server) handleConnect(g *connectGrant) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		connector := s.forges.Connector(g.forge)
-		if connector == nil {
-			http.NotFound(w, r)
-			return
-		}
-		ws := s.ownerWorkspace(w, r)
-		if ws == nil {
-			return
-		}
-		if ws.Forge != g.forge {
-			http.NotFound(w, r)
-			return
-		}
-		state, err := newState()
-		if err != nil {
-			s.internalError(w, "generating connect state", err)
-			return
-		}
-		http.SetCookie(w, &http.Cookie{
-			Name:     g.cookie,
-			Value:    state + "|" + ws.Prefix + "|" + connectFrom(r),
-			Path:     "/",
-			MaxAge:   int((10 * time.Minute).Seconds()),
-			HttpOnly: true,
-			Secure:   s.secureCookies,
-			SameSite: http.SameSiteLaxMode,
-		})
-		http.Redirect(w, r, connector.AuthorizeURL(state, s.redirectURI(g.forge)), http.StatusFound)
+// handleConnect implements GET /workspaces/{forge}/{prefix}/connect: the
+// start of the connect grant — state cookie, then the forge's consent
+// page. A GitHub workspace connects by installing the App instead, so it
+// has no grant to start and the page does not exist.
+func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
+	// The path's forge is the workspace's forge (that is how the row is
+	// looked up), so whether a grant exists is known before any query.
+	g := connectGrantFor(r.PathValue("forge"))
+	if g == nil {
+		http.NotFound(w, r)
+		return
 	}
+	connector := s.forges.Connector(g.forge)
+	if connector == nil {
+		http.NotFound(w, r)
+		return
+	}
+	ws := s.ownerWorkspace(w, r)
+	if ws == nil {
+		return
+	}
+	state, err := newState()
+	if err != nil {
+		s.internalError(w, "generating connect state", err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     g.cookie,
+		Value:    state + "|" + ws.Prefix + "|" + connectFrom(r),
+		Path:     "/",
+		MaxAge:   int((10 * time.Minute).Seconds()),
+		HttpOnly: true,
+		Secure:   s.secureCookies,
+		SameSite: http.SameSiteLaxMode,
+	})
+	http.Redirect(w, r, connector.AuthorizeURL(state, s.redirectURI(g.forge)), http.StatusFound)
 }
 
 // connectCallback reports whether the sign-in callback request is
@@ -140,7 +142,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 				"from the workspace settings page.")
 		return true
 	}
-	ws, err := s.store.WorkspaceByPrefix(r.Context(), prefix)
+	ws, err := s.store.WorkspaceByPrefix(r.Context(), g.forge, prefix)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
@@ -154,7 +156,7 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 		s.internalError(w, "listing memberships", err)
 		return true
 	}
-	if ws.Forge != g.forge || !member {
+	if !member {
 		http.NotFound(w, r)
 		return true
 	}
@@ -179,28 +181,37 @@ func (s *Server) connectCallback(g *connectGrant, w http.ResponseWriter, r *http
 	}
 	s.forges.CacheGrantToken(g.forge, ws.ID, grant.AccessToken, grant.TTL)
 	s.log.Info(g.forge+" workspace connected", "workspace", ws.Prefix, "account", grant.Account, "user", u.DisplayName)
-	http.Redirect(w, r, connectDest(ws.Prefix, from), http.StatusSeeOther)
+	http.Redirect(w, r, connectDest(ws, from), http.StatusSeeOther)
 	return true
 }
 
-// handleDisconnect implements POST /workspaces/{prefix}/{forge}/disconnect:
+// handleDisconnect implements POST /workspaces/{forge}/{prefix}/disconnect:
 // forget the grant. The consent itself lives on the forge (the account's
 // authorized-applications page); this only stops gocov using it and
-// drops resolution back to the credential chain.
-func (s *Server) handleDisconnect(g *connectGrant) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		ws := s.ownerWorkspace(w, r)
-		if ws == nil {
-			return
-		}
-		if err := g.set(s.store, r.Context(), ws.ID, "", "", false); err != nil {
-			s.internalError(w, "disconnecting "+g.forge+" grant", err)
-			return
-		}
-		s.forges.DropGrantToken(g.forge, ws.ID)
-		s.log.Info(g.forge+" workspace disconnected", "workspace", ws.Prefix, "user", currentUser(r).DisplayName)
-		http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
+// drops resolution back to the credential chain. A GitHub workspace's
+// connection is its App installation link; forgetting that is
+// githubDisconnect's job.
+func (s *Server) handleDisconnect(w http.ResponseWriter, r *http.Request) {
+	ws := s.ownerWorkspace(w, r)
+	if ws == nil {
+		return
 	}
+	if ws.Forge == "github" {
+		s.githubDisconnect(w, r, ws)
+		return
+	}
+	g := connectGrantFor(ws.Forge)
+	if g == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := g.set(s.store, r.Context(), ws.ID, "", "", false); err != nil {
+		s.internalError(w, "disconnecting "+g.forge+" grant", err)
+		return
+	}
+	s.forges.DropGrantToken(g.forge, ws.ID)
+	s.log.Info(g.forge+" workspace disconnected", "workspace", ws.Prefix, "user", currentUser(r).DisplayName)
+	http.Redirect(w, r, workspaceURL(ws, "?saved=1"), http.StatusSeeOther)
 }
 
 // addGrantData flags, for the settings and setup pages, that this

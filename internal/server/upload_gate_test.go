@@ -195,7 +195,7 @@ func TestWorkspaceGateInheritedByAutoCreatedRepos(t *testing.T) {
 	if !strings.HasPrefix(resp.Gate, "failed: total coverage 80% is below the minimum 85%") {
 		t.Errorf("gate = %q, want inherited workspace gate failure", resp.Gate)
 	}
-	repo, err := st.RepoBySlug(ctx, "acme/newrepo")
+	repo, err := st.RepoBySlug(ctx, "bitbucket", "acme/newrepo")
 	if err != nil {
 		t.Fatal(err)
 	}

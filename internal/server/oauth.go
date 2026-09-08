@@ -44,7 +44,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// to ask about, but to anyone else they disclose who uses this
 	// instance — so they render only after a real Bitbucket identity
 	// was rejected, never on the plain sign-in page.
-	var workspaces []string
+	var workspaces []trackedWorkspace
 	if denied {
 		workspaces = s.trackedWorkspaces(r)
 	}
@@ -259,7 +259,7 @@ func (s *Server) admitSignIn(w http.ResponseWriter, r *http.Request, forge strin
 		return false
 	}
 	for _, ws := range id.Workspaces {
-		if allowed[ws] {
+		if admits(allowed, forge, ws) {
 			return true
 		}
 	}

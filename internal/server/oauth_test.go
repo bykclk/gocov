@@ -144,7 +144,7 @@ func TestLoginFlow(t *testing.T) {
 	provider := &fakeProvider{identity: memberIdentity()}
 	f := newAuthFixture(t, provider, nil)
 
-	sess := signIn(t, f, "/repos/acme/widgets")
+	sess := signIn(t, f, "/repos/bitbucket/acme/widgets")
 	if provider.gotCode != "thecode" {
 		t.Errorf("provider got code %q", provider.gotCode)
 	}
@@ -313,14 +313,14 @@ func TestOpenRedirectRejected(t *testing.T) {
 // (non-ASCII percent-encoded) but never redirected away from.
 func TestSanitizeNextKeepsInSitePaths(t *testing.T) {
 	for next, want := range map[string]string{
-		"/":                         "/",
-		"/onboarding":               "/onboarding",
-		"/workspaces/acme":          "/workspaces/acme",
-		"/repos/acme/web":           "/repos/acme/web",
-		"/repos/acme/web?tab=files": "/repos/acme/web?tab=files",
+		"/":                                   "/",
+		"/onboarding":                         "/onboarding",
+		"/workspaces/bitbucket/acme":          "/workspaces/bitbucket/acme",
+		"/repos/bitbucket/acme/web":           "/repos/bitbucket/acme/web",
+		"/repos/bitbucket/acme/web?tab=files": "/repos/bitbucket/acme/web?tab=files",
 		"/github/setup?installation_id=42&setup_action=install": "/github/setup?installation_id=42&setup_action=install",
-		"/repos/acme/web#L12":   "/repos/acme/web#L12",
-		"/repos/acme/web?q=a+b": "/repos/acme/web?q=a+b",
+		"/repos/bitbucket/acme/web#L12":                         "/repos/bitbucket/acme/web#L12",
+		"/repos/bitbucket/acme/web?q=a+b":                       "/repos/bitbucket/acme/web?q=a+b",
 		// Percent-encoded on the way out, and still the same destination.
 		"/wörk/spåce": "/w%C3%B6rk/sp%C3%A5ce",
 	} {
@@ -332,11 +332,11 @@ func TestSanitizeNextKeepsInSitePaths(t *testing.T) {
 
 // The state cookie carries next across the consent round trip, and
 // http.SetCookie deletes every byte it considers invalid — anything
-// non-ASCII, '"', ';'. Unencoded, "/repos/acme/wörk" came back as
-// "/repos/acme/wrk" and the visitor landed on a 404 after signing in.
+// non-ASCII, '"', ';'. Unencoded, "/repos/bitbucket/acme/wörk" came back as
+// "/repos/bitbucket/acme/wrk" and the visitor landed on a 404 after signing in.
 func TestNextSurvivesTheStateCookie(t *testing.T) {
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
-	for _, next := range []string{"/repos/acme/wörk", "/a;b", `/a"b`, "/a b", "/repos/acme/web?q=a+b"} {
+	for _, next := range []string{"/repos/bitbucket/acme/wörk", "/a;b", `/a"b`, "/a b", "/repos/bitbucket/acme/web?q=a+b"} {
 		t.Run(next, func(t *testing.T) {
 			start := get(f, "/oauth/bitbucket/start?next="+url.QueryEscape(next))
 			ck := cookieNamed(t, start, stateCookie)
@@ -358,7 +358,7 @@ func TestSanitizeNextIsWhatGoesOnTheWire(t *testing.T) {
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
 	sess := signIn(t, f, "/")
 	nexts := append([]string{
-		"/", "/onboarding", "/repos/acme/web?tab=files", "/repos/acme/web#L12",
+		"/", "/onboarding", "/repos/bitbucket/acme/web?tab=files", "/repos/bitbucket/acme/web#L12",
 		"/wörk/spåce", "/a/b/", "/a/./b", "/a/../b", "/%2f/evil.example",
 	}, hostileNext...)
 	for _, next := range nexts {
@@ -401,7 +401,10 @@ func TestTwoProviders(t *testing.T) {
 		Email:       "hub@example.com",
 		Workspaces:  []string{"acme"},
 	}}
-	f := newMultiAuthFixture(t, []auth.Provider{bb, gh}, nil)
+	// The fixture tracks bitbucket's acme only, and names are scoped per
+	// forge; the operator's explicit list is what lets the GitHub org
+	// "acme" in here, so the test stays about provider routing.
+	f := newMultiAuthFixture(t, []auth.Provider{bb, gh}, []string{"acme"})
 
 	// The login page renders one button per provider, in order.
 	login := get(f, "/login")
@@ -483,3 +486,27 @@ func TestLoginPageHidesWorkspacesUntilDenied(t *testing.T) {
 
 // coveredPRDiff touches only a.go lines 2-3, which the profile covers, so
 // diff coverage is 100% and no annotations are expected.
+
+// TestTrackedNameOnAnotherForgeAdmitsNobody pins the derived allow-set to
+// the forge: the fixture tracks bitbucket's acme/widgets, and a GitHub
+// account whose org is also called "acme" is a stranger to it.
+func TestTrackedNameOnAnotherForgeAdmitsNobody(t *testing.T) {
+	gh := &fakeProvider{name: "github", identity: memberIdentity()}
+	f := newAuthFixture(t, gh, nil)
+
+	start := get(f, "/oauth/github/start")
+	stateCk := cookieNamed(t, start, stateCookie)
+	state, _, _ := strings.Cut(stateCk.Value, "|")
+	rec := get(f, "/oauth/github/callback?code=x&state="+url.QueryEscape(state), stateCk)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login?denied=1" {
+		t.Fatalf("github acme against a bitbucket acme: %d -> %q, want denial", rec.Code, rec.Header().Get("Location"))
+	}
+	if users, _ := f.store.ListUsers(t.Context()); len(users) != 0 {
+		t.Errorf("denied login created users: %v", users)
+	}
+	// The denial page names the forge the workspace is tracked on, so a
+	// member of the same-named workspace elsewhere can see the mismatch.
+	if body := get(f, "/login?denied=1").Body.String(); !strings.Contains(body, "<code>acme</code> on Bitbucket") {
+		t.Errorf("denied page does not say which forge tracks acme:\n%s", body)
+	}
+}

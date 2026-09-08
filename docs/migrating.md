@@ -105,7 +105,7 @@ In branch protection, replace `codecov/project` and `codecov/patch` with `gocov`
 <!-- before -->
 [![codecov](https://codecov.io/gh/myorg/myrepo/branch/main/graph/badge.svg?token=…)](https://codecov.io/gh/myorg/myrepo)
 <!-- after -->
-[![coverage](https://app.gocov.dev/badge/myorg/myrepo.svg)](https://app.gocov.dev/repos/myorg/myrepo?ref=badge)
+[![coverage](https://app.gocov.dev/badge/github/myorg/myrepo.svg)](https://app.gocov.dev/repos/github/myorg/myrepo?ref=badge)
 ```
 
 Finally: delete `codecov.yml`, the `CODECOV_TOKEN` secret, and uninstall the Codecov app from the organization.
@@ -174,7 +174,7 @@ Replace the `coverage/coveralls` required check with `gocov` or `gocov coverage`
 <!-- before -->
 [![Coverage Status](https://coveralls.io/repos/github/myorg/myrepo/badge.svg?branch=main)](https://coveralls.io/github/myorg/myrepo?branch=main)
 <!-- after -->
-[![coverage](https://app.gocov.dev/badge/myorg/myrepo.svg)](https://app.gocov.dev/repos/myorg/myrepo?ref=badge)
+[![coverage](https://app.gocov.dev/badge/github/myorg/myrepo.svg)](https://app.gocov.dev/repos/github/myorg/myrepo?ref=badge)
 ```
 
 Finally: delete `.coveralls.yml` if you have one, the `COVERALLS_REPO_TOKEN` secret, and the Coveralls webhook or app.

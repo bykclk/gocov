@@ -63,7 +63,7 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ws, err := s.store.WorkspaceByPrefix(r.Context(), login)
+	ws, err := s.store.WorkspaceByPrefix(r.Context(), "github", login)
 	switch {
 	case err == nil:
 		s.connectExisting(w, r, u, ws, login, id)
@@ -83,14 +83,6 @@ func (s *Server) handleGitHubSetup(w http.ResponseWriter, r *http.Request) {
 // case; a member arriving with an installation most likely became admin
 // after their last sign-in, and signing in again refreshes the role.
 func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *store.User, ws *store.Workspace, login string, installationID int64) {
-	if ws.Forge != "github" {
-		// Prefixes are forge-agnostic and globally unique (M3); the name
-		// belongs to another forge's tenant here.
-		s.renderConnect(w, r, http.StatusConflict, "Workspace name in use",
-			"The name "+login+" is already registered under another forge on this server, "+
-				"so the installation cannot be linked to it.")
-		return
-	}
 	role, member, err := s.seat(r.Context(), u, ws)
 	if err != nil {
 		s.internalError(w, "listing memberships", err)
@@ -131,7 +123,7 @@ func (s *Server) connectExisting(w http.ResponseWriter, r *http.Request, u *stor
 		return
 	}
 	s.log.Info("github app connected", "workspace", ws.Prefix, "installation", installationID, "user", u.DisplayName)
-	http.Redirect(w, r, "/workspaces/"+ws.Prefix+"?connected=1", http.StatusSeeOther)
+	http.Redirect(w, r, workspaceURL(ws, "?connected=1"), http.StatusSeeOther)
 }
 
 // connectNew is the install-first path: the account has no workspace here
@@ -178,7 +170,7 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 	}
 	if err := s.store.RegisterWorkspace(r.Context(), ws, u.ID); err != nil {
 		// A concurrent claim may have won the create race; link to it.
-		if existing, lookupErr := s.store.WorkspaceByPrefix(r.Context(), login); lookupErr == nil {
+		if existing, lookupErr := s.store.WorkspaceByPrefix(r.Context(), "github", login); lookupErr == nil {
 			s.connectExisting(w, r, u, existing, login, installationID)
 			return
 		}
@@ -186,18 +178,14 @@ func (s *Server) connectNew(w http.ResponseWriter, r *http.Request, u *store.Use
 		return
 	}
 	s.log.Info("workspace registered via github app", "prefix", login, "installation", installationID, "user", u.DisplayName)
-	http.Redirect(w, r, onboardingReadyURL(ws.Prefix), http.StatusSeeOther)
+	http.Redirect(w, r, onboardingReadyURL(ws), http.StatusSeeOther)
 }
 
-// handleGitHubDisconnect implements POST /workspaces/{prefix}/github/disconnect:
-// forget the installation link. The installation itself lives on GitHub —
+// githubDisconnect is POST /workspaces/github/{prefix}/disconnect: forget
+// the installation link. The installation itself lives on GitHub —
 // uninstalling there is the org owner's move; this only stops gocov
 // using it and drops resolution back to the credential chain.
-func (s *Server) handleGitHubDisconnect(w http.ResponseWriter, r *http.Request) {
-	ws := s.ownerWorkspace(w, r)
-	if ws == nil {
-		return
-	}
+func (s *Server) githubDisconnect(w http.ResponseWriter, r *http.Request, ws *store.Workspace) {
 	ws.GitHubInstallationID = 0
 	ws.GitHubAppBroken = false
 	if err := s.store.UpdateWorkspace(r.Context(), ws); err != nil {
@@ -205,7 +193,7 @@ func (s *Server) handleGitHubDisconnect(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.log.Info("github app disconnected", "workspace", ws.Prefix, "user", currentUser(r).DisplayName)
-	http.Redirect(w, r, "/workspaces/"+ws.Prefix+"?saved=1", http.StatusSeeOther)
+	http.Redirect(w, r, workspaceURL(ws, "?saved=1"), http.StatusSeeOther)
 }
 
 // inForgeWorkspaces reports whether the login is in the user's stored

@@ -101,7 +101,7 @@ func TestGitLabOIDCRegistersNestedProject(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	repo, err := f.store.RepoBySlug(t.Context(), "acme/tools/gadgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "gitlab", "acme/tools/gadgets")
 	if err != nil {
 		t.Fatalf("repo not registered: %v", err)
 	}

@@ -58,7 +58,7 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 		if !resp.RepoCreated {
 			t.Error("repo_created not reported")
 		}
-		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
+		repo, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/newrepo")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +91,7 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 		// No credentials: the forge cannot be asked.
 		f := newWsFixture(t, "develop", "development", false)
 		doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c1"}, testProfile)
-		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
+		repo, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/newrepo")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -108,7 +108,7 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 		// and the workspace has no default of its own.
 		f := newWsFixture(t, "", "", true)
 		doUpload(t, f, "ws-token", map[string]string{"repo": "acme/newrepo", "commit": "c1"}, testProfile)
-		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
+		repo, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/newrepo")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -153,7 +153,7 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("status = %d, want 404; body = %s", rec.Code, rec.Body)
 		}
-		if _, err := f.store.RepoBySlug(ctx, "acme/ghost"); !errors.Is(err, store.ErrNotFound) {
+		if _, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/ghost"); !errors.Is(err, store.ErrNotFound) {
 			t.Error("nonexistent forge repo must not be registered")
 		}
 	})
@@ -165,7 +165,7 @@ func TestWorkspaceTokenUpload(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 		}
-		repo, err := f.store.RepoBySlug(ctx, "acme/newrepo")
+		repo, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/newrepo")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -217,7 +217,7 @@ func TestGitLabNestedWorkspaceUpload(t *testing.T) {
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 		}
-		if _, err := f.store.RepoBySlug(ctx, "grp/sub/proj"); err != nil {
+		if _, err := f.store.RepoBySlug(ctx, "gitlab", "grp/sub/proj"); err != nil {
 			t.Errorf("repo not auto-registered: %v", err)
 		}
 	})

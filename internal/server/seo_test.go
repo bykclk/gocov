@@ -52,7 +52,7 @@ func TestSitemapListsOnlyPublicRepoPages(t *testing.T) {
 		t.Fatalf("sitemap.xml: status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "https://gocov.example/repos/acme/widgets") {
+	if !strings.Contains(body, "https://gocov.example/repos/bitbucket/acme/widgets") {
 		t.Errorf("sitemap misses the public repo:\n%s", body)
 	}
 	if strings.Contains(body, "acme/private") || strings.Contains(body, "acme/optedout") {
@@ -70,11 +70,11 @@ func TestSitemapGoneWhenPublicReportsOff(t *testing.T) {
 func TestRepoPageCarriesSEOTags(t *testing.T) {
 	f := newPublicFixture(t, store.VisibilityPublic, true)
 
-	body := get(f, "/repos/acme/widgets").Body.String()
+	body := get(f, "/repos/bitbucket/acme/widgets").Body.String()
 	if !strings.Contains(body, "<title>acme/widgets code coverage — gocov</title>") {
 		t.Errorf("repo page misses the descriptive title:\n%.400s", body)
 	}
-	if !strings.Contains(body, `<link rel="canonical" href="https://gocov.example/repos/acme/widgets">`) {
+	if !strings.Contains(body, `<link rel="canonical" href="https://gocov.example/repos/bitbucket/acme/widgets">`) {
 		t.Error("repo page misses the canonical link")
 	}
 	if !strings.Contains(body, `<meta name="description"`) {

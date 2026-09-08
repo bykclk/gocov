@@ -29,7 +29,7 @@ func TestBadge(t *testing.T) {
 					t.Fatalf("upload failed: %d %s", rec.Code, rec.Body)
 				}
 			}
-			req := httptest.NewRequest(http.MethodGet, "/badge/acme/widgets.svg", nil)
+			req := httptest.NewRequest(http.MethodGet, "/badge/bitbucket/acme/widgets.svg", nil)
 			rec := httptest.NewRecorder()
 			f.srv.ServeHTTP(rec, req)
 			if rec.Code != http.StatusOK {
@@ -51,7 +51,7 @@ func TestBadge(t *testing.T) {
 
 func TestBadgeUnknownRepo(t *testing.T) {
 	f := newFixture(t, nil)
-	req := httptest.NewRequest(http.MethodGet, "/badge/no/such.svg", nil)
+	req := httptest.NewRequest(http.MethodGet, "/badge/bitbucket/no/such.svg", nil)
 	rec := httptest.NewRecorder()
 	f.srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -63,7 +63,7 @@ func TestBadgeUsesDefaultBranchOnly(t *testing.T) {
 	f := newFixture(t, nil)
 	// Only a feature-branch upload exists; the badge must stay "unknown".
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c", "branch": "feature/x"}, testProfile)
-	req := httptest.NewRequest(http.MethodGet, "/badge/acme/widgets.svg", nil)
+	req := httptest.NewRequest(http.MethodGet, "/badge/bitbucket/acme/widgets.svg", nil)
 	rec := httptest.NewRecorder()
 	f.srv.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), ">unknown<") {
@@ -79,7 +79,7 @@ func TestBadgeAndDashboardShowMergedTotal(t *testing.T) {
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main", "part": "backend"}, backendPart)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main", "part": "frontend"}, frontendPart)
 
-	req := httptest.NewRequest(http.MethodGet, "/badge/acme/widgets.svg", nil)
+	req := httptest.NewRequest(http.MethodGet, "/badge/bitbucket/acme/widgets.svg", nil)
 	rec := httptest.NewRecorder()
 	f.srv.ServeHTTP(rec, req)
 	if svg := rec.Body.String(); !strings.Contains(svg, ">80.0%<") {

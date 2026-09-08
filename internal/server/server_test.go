@@ -185,7 +185,7 @@ func TestPages(t *testing.T) {
 	}
 
 	// Repo page lists the upload.
-	repoPage := get("/repos/acme/widgets")
+	repoPage := get("/repos/bitbucket/acme/widgets")
 	if repoPage.Code != http.StatusOK || !strings.Contains(repoPage.Body.String(), "abc123def456") {
 		t.Errorf("repo page: code=%d", repoPage.Code)
 	}
@@ -199,7 +199,7 @@ func TestPages(t *testing.T) {
 		t.Errorf("upload page: code=%d body=%s", upPage.Code, body)
 	}
 
-	if rec := get("/repos/no/such"); rec.Code != http.StatusNotFound {
+	if rec := get("/repos/bitbucket/no/such"); rec.Code != http.StatusNotFound {
 		t.Errorf("missing repo page: code=%d, want 404", rec.Code)
 	}
 	if rec := get("/uploads/999"); rec.Code != http.StatusNotFound {
@@ -251,7 +251,7 @@ func TestNotFoundPage(t *testing.T) {
 	})
 
 	t.Run("missing repo renders styled page", func(t *testing.T) {
-		rec := get(f, "/repos/acme/ghost")
+		rec := get(f, "/repos/bitbucket/acme/ghost")
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", rec.Code)
 		}

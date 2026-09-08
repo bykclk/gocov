@@ -72,7 +72,7 @@ func demote(t *testing.T, f *fixture, prefix string) {
 	if err != nil || len(users) != 1 {
 		t.Fatalf("users = %v, %v", users, err)
 	}
-	ws, err := f.store.WorkspaceByPrefix(ctx, prefix)
+	ws, err := f.store.WorkspaceByPrefix(ctx, users[0].Forge, prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func postForm(f *fixture, path string, form url.Values, cookies ...*http.Cookie)
 func TestWorkspaceSettingsAccess(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
 
-	rec := get(f, "/workspaces/acme", sess)
+	rec := get(f, "/workspaces/bitbucket/acme", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member settings page: status = %d", rec.Code)
 	}
@@ -115,7 +115,7 @@ func TestWorkspaceSettingsAccess(t *testing.T) {
 	if !strings.Contains(body, "ws-secret") {
 		t.Error("settings page should make the upload token available to members (Reveal)")
 	}
-	if !strings.Contains(body, "/workspaces/acme/setup") {
+	if !strings.Contains(body, "/workspaces/bitbucket/acme/setup") {
 		t.Error("settings page must link to the setup instructions (R4)")
 	}
 
@@ -124,11 +124,11 @@ func TestWorkspaceSettingsAccess(t *testing.T) {
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(f, "/workspaces/beta", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/workspaces/bitbucket/beta", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member settings page: status = %d, want 404", rec.Code)
 	}
 	// Without a session the auth middleware redirects to login.
-	if rec := get(f, "/workspaces/acme"); rec.Code != http.StatusFound {
+	if rec := get(f, "/workspaces/bitbucket/acme"); rec.Code != http.StatusFound {
 		t.Errorf("anonymous settings page: status = %d, want login redirect", rec.Code)
 	}
 }
@@ -140,7 +140,7 @@ func TestMemberSettingsAreReadOnly(t *testing.T) {
 	f, sess := newMemberFixture(t, true)
 	ctx := t.Context()
 
-	rec := get(f, "/workspaces/acme", sess)
+	rec := get(f, "/workspaces/bitbucket/acme", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member settings page: status = %d", rec.Code)
 	}
@@ -148,7 +148,7 @@ func TestMemberSettingsAreReadOnly(t *testing.T) {
 	if strings.Contains(body, "ws-secret") {
 		t.Error("member page carries the upload token")
 	}
-	for _, control := range []string{"Rotate token", "Delete this workspace", `action="/workspaces/acme/settings"`, "Grant write access"} {
+	for _, control := range []string{"Rotate token", "Delete this workspace", `action="/workspaces/bitbucket/acme/settings"`, "Grant write access"} {
 		if strings.Contains(body, control) {
 			t.Errorf("member page renders the owner control %q", control)
 		}
@@ -165,16 +165,16 @@ func TestMemberSettingsAreReadOnly(t *testing.T) {
 		path string
 		form url.Values
 	}{
-		{"/workspaces/acme/rotate-token", url.Values{}},
-		{"/workspaces/acme/settings", url.Values{"default_branch": {"develop"}}},
-		{"/workspaces/acme/delete", url.Values{}},
-		{"/workspaces/acme/bitbucket/disconnect", url.Values{}},
+		{"/workspaces/bitbucket/acme/rotate-token", url.Values{}},
+		{"/workspaces/bitbucket/acme/settings", url.Values{"default_branch": {"develop"}}},
+		{"/workspaces/bitbucket/acme/delete", url.Values{}},
+		{"/workspaces/bitbucket/acme/disconnect", url.Values{}},
 	} {
 		if rec := postForm(f, post.path, post.form, sess); rec.Code != http.StatusForbidden {
 			t.Errorf("member POST %s: status = %d, want 403", post.path, rec.Code)
 		}
 	}
-	ws, err := f.store.WorkspaceByPrefix(ctx, "acme")
+	ws, err := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if err != nil || ws.Token != "ws-secret" || ws.DefaultBranch != "main" {
 		t.Errorf("a member's refused POSTs changed the workspace: %+v, %v", ws, err)
 	}
@@ -182,14 +182,14 @@ func TestMemberSettingsAreReadOnly(t *testing.T) {
 	// The setup page (Wire up CI, so a workspace without repos yet) keeps
 	// the CI snippet for a member, minus the token.
 	f, sess = newMemberFixture(t, false)
-	rec = get(f, "/workspaces/acme/setup", sess)
+	rec = get(f, "/workspaces/bitbucket/acme/setup", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member setup page: status = %d", rec.Code)
 	}
 	if body := rec.Body.String(); strings.Contains(body, "ws-secret") || !strings.Contains(body, "owners only") {
 		t.Errorf("member setup page must withhold the token and say so:\n%s", body)
 	}
-	if rec := get(f, "/workspaces/acme/setup/status", sess); rec.Code != http.StatusOK {
+	if rec := get(f, "/workspaces/bitbucket/acme/setup/status", sess); rec.Code != http.StatusOK {
 		t.Errorf("member setup poll: status = %d", rec.Code)
 	}
 }
@@ -198,14 +198,14 @@ func TestOwnerDemotedOnTheForgeLosesTheControls(t *testing.T) {
 	// The role is whatever the last sign-in said; once it says member,
 	// the owner-only routes close — no session or page state keeps them.
 	f, sess := newWorkspaceFixture(t, false)
-	if rec := postForm(f, "/workspaces/acme/settings", url.Values{"default_branch": {"develop"}}, sess); rec.Code != http.StatusSeeOther {
+	if rec := postForm(f, "/workspaces/bitbucket/acme/settings", url.Values{"default_branch": {"develop"}}, sess); rec.Code != http.StatusSeeOther {
 		t.Fatalf("owner save: status = %d", rec.Code)
 	}
 	demote(t, f, "acme")
-	if rec := postForm(f, "/workspaces/acme/settings", url.Values{"default_branch": {"main"}}, sess); rec.Code != http.StatusForbidden {
+	if rec := postForm(f, "/workspaces/bitbucket/acme/settings", url.Values{"default_branch": {"main"}}, sess); rec.Code != http.StatusForbidden {
 		t.Errorf("demoted save: status = %d, want 403", rec.Code)
 	}
-	if ws, _ := f.store.WorkspaceByPrefix(t.Context(), "acme"); ws.DefaultBranch != "develop" {
+	if ws, _ := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "acme"); ws.DefaultBranch != "develop" {
 		t.Errorf("demoted save went through: branch = %q", ws.DefaultBranch)
 	}
 }
@@ -218,7 +218,7 @@ func TestWorkspaceSettingsNeedAuthEnabled(t *testing.T) {
 		&store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/workspaces/acme", "/workspaces/acme/setup"} {
+	for _, path := range []string{"/workspaces/bitbucket/acme", "/workspaces/bitbucket/acme/setup"} {
 		if rec := get(f, path); rec.Code != http.StatusNotFound {
 			t.Errorf("GET %s in open mode: status = %d, want 404", path, rec.Code)
 		}
@@ -236,11 +236,11 @@ func TestWorkspaceRotateToken(t *testing.T) {
 		t.Fatalf("upload with workspace token: status = %d, body = %s", rec.Code, rec.Body)
 	}
 
-	rot := postForm(f, "/workspaces/acme/rotate-token", url.Values{}, sess)
+	rot := postForm(f, "/workspaces/bitbucket/acme/rotate-token", url.Values{}, sess)
 	if rot.Code != http.StatusOK {
 		t.Fatalf("rotate: status = %d", rot.Code)
 	}
-	ws, err := f.store.WorkspaceByPrefix(ctx, "acme")
+	ws, err := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestWorkspaceRotateToken(t *testing.T) {
 
 	// A fresh settings page load still carries the current token so a
 	// member can reveal it (masked by default); the OLD token is gone.
-	page := get(f, "/workspaces/acme", sess).Body.String()
+	page := get(f, "/workspaces/bitbucket/acme", sess).Body.String()
 	if !strings.Contains(page, ws.Token) {
 		t.Error("settings page should expose the rotated token to members (Reveal)")
 	}
@@ -277,15 +277,15 @@ func TestWorkspaceSettingsUpdate(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
 	ctx := t.Context()
 
-	rec := postForm(f, "/workspaces/acme/settings", url.Values{
+	rec := postForm(f, "/workspaces/bitbucket/acme/settings", url.Values{
 		"default_branch":    {"develop"},
 		"min_coverage":      {"80"},
 		"max_coverage_drop": {"0"},
 	}, sess)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/workspaces/acme?saved=1" {
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/workspaces/bitbucket/acme?saved=1" {
 		t.Fatalf("settings save: %d -> %q", rec.Code, rec.Header().Get("Location"))
 	}
-	ws, _ := f.store.WorkspaceByPrefix(ctx, "acme")
+	ws, _ := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if ws.DefaultBranch != "develop" ||
 		ws.Gate.MinCoverage == nil || *ws.Gate.MinCoverage != 80 ||
 		ws.Gate.MaxCoverageDrop == nil || *ws.Gate.MaxCoverageDrop != 0 ||
@@ -294,8 +294,8 @@ func TestWorkspaceSettingsUpdate(t *testing.T) {
 	}
 
 	// Empty gate fields clear the rules.
-	postForm(f, "/workspaces/acme/settings", url.Values{"default_branch": {"develop"}}, sess)
-	if ws, _ := f.store.WorkspaceByPrefix(ctx, "acme"); ws.Gate.Configured() {
+	postForm(f, "/workspaces/bitbucket/acme/settings", url.Values{"default_branch": {"develop"}}, sess)
+	if ws, _ := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme"); ws.Gate.Configured() {
 		t.Errorf("gate not cleared: %+v", ws.Gate)
 	}
 
@@ -305,11 +305,11 @@ func TestWorkspaceSettingsUpdate(t *testing.T) {
 		"out of range": {"default_branch": {"develop"}, "min_diff_coverage": {"120"}},
 		"empty branch": {"default_branch": {" "}},
 	} {
-		if rec := postForm(f, "/workspaces/acme/settings", form, sess); rec.Code != http.StatusBadRequest {
+		if rec := postForm(f, "/workspaces/bitbucket/acme/settings", form, sess); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", name, rec.Code)
 		}
 	}
-	if ws, _ := f.store.WorkspaceByPrefix(ctx, "acme"); ws.DefaultBranch != "develop" {
+	if ws, _ := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme"); ws.DefaultBranch != "develop" {
 		t.Errorf("failed validation changed the workspace: %+v", ws)
 	}
 }
@@ -319,28 +319,28 @@ func TestWorkspaceRetention(t *testing.T) {
 	ctx := t.Context()
 
 	// A valid retention window is persisted alongside the branch.
-	rec := postForm(f, "/workspaces/acme/settings", url.Values{
+	rec := postForm(f, "/workspaces/bitbucket/acme/settings", url.Values{
 		"default_branch":        {"main"},
 		"report_retention_days": {"90"},
 	}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: status = %d", rec.Code)
 	}
-	if ws, _ := f.store.WorkspaceByPrefix(ctx, "acme"); ws.ReportRetentionDays != 90 {
+	if ws, _ := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme"); ws.ReportRetentionDays != 90 {
 		t.Errorf("retention = %d, want 90", ws.ReportRetentionDays)
 	}
 
 	// "Forever" is 0; the selector renders it as the chosen option.
-	postForm(f, "/workspaces/acme/settings", url.Values{
+	postForm(f, "/workspaces/bitbucket/acme/settings", url.Values{
 		"default_branch":        {"main"},
 		"report_retention_days": {"0"},
 	}, sess)
-	if ws, _ := f.store.WorkspaceByPrefix(ctx, "acme"); ws.ReportRetentionDays != 0 {
+	if ws, _ := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme"); ws.ReportRetentionDays != 0 {
 		t.Errorf("retention = %d, want 0 (forever)", ws.ReportRetentionDays)
 	}
 
 	// An unlisted window is rejected and changes nothing.
-	if rec := postForm(f, "/workspaces/acme/settings", url.Values{
+	if rec := postForm(f, "/workspaces/bitbucket/acme/settings", url.Values{
 		"default_branch":        {"main"},
 		"report_retention_days": {"7"},
 	}, sess); rec.Code != http.StatusBadRequest {
@@ -358,18 +358,18 @@ func TestWorkspaceDelete(t *testing.T) {
 		"repo": "acme/widgets", "commit": "c1", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
 		t.Fatalf("seed upload: status = %d", rec.Code)
 	}
-	if _, err := f.store.RepoBySlug(ctx, "acme/widgets"); err != nil {
+	if _, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets"); err != nil {
 		t.Fatalf("repo not present before delete: %v", err)
 	}
 
-	rec := postForm(f, "/workspaces/acme/delete", url.Values{}, sess)
+	rec := postForm(f, "/workspaces/bitbucket/acme/delete", url.Values{}, sess)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
 		t.Fatalf("delete: %d -> %q", rec.Code, rec.Header().Get("Location"))
 	}
-	if _, err := f.store.WorkspaceByPrefix(ctx, "acme"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.store.WorkspaceByPrefix(ctx, "bitbucket", "acme"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("workspace survived delete: %v", err)
 	}
-	if _, err := f.store.RepoBySlug(ctx, "acme/widgets"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("repo survived workspace delete (no cascade): %v", err)
 	}
 
@@ -379,10 +379,10 @@ func TestWorkspaceDelete(t *testing.T) {
 		&store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "beta-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := postForm(f2, "/workspaces/beta/delete", url.Values{}, sess2); rec.Code != http.StatusNotFound {
+	if rec := postForm(f2, "/workspaces/bitbucket/beta/delete", url.Values{}, sess2); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member delete: status = %d, want 404", rec.Code)
 	}
-	if _, err := f2.store.WorkspaceByPrefix(ctx, "beta"); err != nil {
+	if _, err := f2.store.WorkspaceByPrefix(ctx, "bitbucket", "beta"); err != nil {
 		t.Errorf("non-member delete removed the workspace: %v", err)
 	}
 }
@@ -390,7 +390,7 @@ func TestWorkspaceDelete(t *testing.T) {
 func TestSetupPageWaitsAndFlips(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, false) // no repos yet
 
-	rec := get(f, "/workspaces/acme/setup", sess)
+	rec := get(f, "/workspaces/bitbucket/acme/setup", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup page: status = %d", rec.Code)
 	}
@@ -412,16 +412,16 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 	if strings.Contains(body, "Waiting for your first upload") {
 		t.Errorf("CI step must not stack the waiting card:\n%s", body)
 	}
-	if !strings.Contains(body, `href="/workspaces/acme/setup?awaiting=1"`) {
+	if !strings.Contains(body, `href="/workspaces/bitbucket/acme/setup?awaiting=1"`) {
 		t.Errorf("CI step misses the advance-to-first-upload button:\n%s", body)
 	}
 	// Advancing (or the poll target) shows the polling waiting state.
-	await := get(f, "/workspaces/acme/setup?awaiting=1", sess).Body.String()
+	await := get(f, "/workspaces/bitbucket/acme/setup?awaiting=1", sess).Body.String()
 	if !strings.Contains(await, "Waiting for your first upload") ||
-		!strings.Contains(await, `hx-get="/workspaces/acme/setup/status"`) {
+		!strings.Contains(await, `hx-get="/workspaces/bitbucket/acme/setup/status"`) {
 		t.Errorf("first-upload step misses the waiting state:\n%s", await)
 	}
-	if st := get(f, "/workspaces/acme/setup/status", sess); !strings.Contains(st.Body.String(), "Waiting") {
+	if st := get(f, "/workspaces/bitbucket/acme/setup/status", sess); !strings.Contains(st.Body.String(), "Waiting") {
 		t.Errorf("status endpoint should still wait:\n%s", st.Body)
 	}
 
@@ -434,16 +434,16 @@ func TestSetupPageWaitsAndFlips(t *testing.T) {
 	// Once the upload lands the poll redirects to the clean done page
 	// rather than swapping the card in under the CI step; landed=1 marks
 	// that one load for the analytics snippet.
-	st := get(f, "/workspaces/acme/setup/status", sess)
-	if loc := st.Header().Get("HX-Redirect"); loc != "/workspaces/acme/setup?landed=1" {
+	st := get(f, "/workspaces/bitbucket/acme/setup/status", sess)
+	if loc := st.Header().Get("HX-Redirect"); loc != "/workspaces/bitbucket/acme/setup?landed=1" {
 		t.Errorf("status endpoint did not redirect on flip: HX-Redirect=%q", loc)
 	}
 	// The reloaded setup page is the clean First-upload done state: the
 	// report summary, no CI card, no polling.
-	rec = get(f, "/workspaces/acme/setup", sess)
+	rec = get(f, "/workspaces/bitbucket/acme/setup", sess)
 	body = rec.Body.String()
 	if !strings.Contains(body, "Coverage is flowing") ||
-		!strings.Contains(body, `href="/repos/acme/newrepo"`) ||
+		!strings.Contains(body, `href="/repos/bitbucket/acme/newrepo"`) ||
 		!strings.Contains(body, "First report") || !strings.Contains(body, "Lines covered") {
 		t.Errorf("done page missing content:\n%s", body)
 	}
@@ -477,7 +477,7 @@ func TestSetupPageGitHubSnippet(t *testing.T) {
 	cb := get(f, "/oauth/github/callback?code=x&state="+url.QueryEscape(state), stateCk)
 	sess := cookieNamed(t, cb, sessionCookie)
 
-	rec := get(f, "/workspaces/myorg/setup", sess)
+	rec := get(f, "/workspaces/github/myorg/setup", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup page: status = %d", rec.Code)
 	}
@@ -523,7 +523,7 @@ func TestSetupPageGitLabSnippet(t *testing.T) {
 	}
 	sess := signInVia(t, f, "gitlab")
 
-	body := get(f, "/workspaces/grp%2Fteam/setup", sess).Body.String()
+	body := get(f, "/workspaces/gitlab/grp%2Fteam/setup", sess).Body.String()
 	// gitlab.com workspaces get the CI/CD Catalog component, which does
 	// the pinned download and checksum itself.
 	if !strings.Contains(body, ".gitlab-ci.yml") || !strings.Contains(body, "component: gitlab.com/gocov/gocov/upload@1") {
@@ -566,7 +566,7 @@ func TestSetupPageTokenlessGitHub(t *testing.T) {
 	}
 	sess := signInVia(t, f, "github")
 
-	body := get(f, "/workspaces/myorg/setup", sess).Body.String()
+	body := get(f, "/workspaces/github/myorg/setup", sess).Body.String()
 	for _, want := range []string{
 		"id-token: write",
 		"gocov/gocov-action@v1",
@@ -613,7 +613,7 @@ func TestSetupPageBrokenConnectionFallsBackToToken(t *testing.T) {
 	}
 	sess := signInVia(t, f, "github")
 
-	body := get(f, "/workspaces/myorg/setup", sess).Body.String()
+	body := get(f, "/workspaces/github/myorg/setup", sess).Body.String()
 	for _, want := range []string{
 		"${{ secrets.GOCOV_TOKEN }}",
 		"no longer works",
@@ -662,7 +662,7 @@ func TestSetupPageTokenlessBitbucket(t *testing.T) {
 	}
 	sess := signInVia(t, f, "bitbucket")
 
-	body := get(f, "/workspaces/acme/setup", sess).Body.String()
+	body := get(f, "/workspaces/bitbucket/acme/setup", sess).Body.String()
 	for _, want := range []string{
 		"oidc:",
 		"- " + hosted.DefaultServer,
@@ -709,7 +709,7 @@ func TestSetupPageSelfManagedGitLabSnippet(t *testing.T) {
 	}
 	sess := signInVia(t, f, "gitlab")
 
-	body := get(f, "/workspaces/grp%2Fteam/setup", sess).Body.String()
+	body := get(f, "/workspaces/gitlab/grp%2Fteam/setup", sess).Body.String()
 	if !strings.Contains(body, ".gitlab-ci.yml") || !strings.Contains(body, "sha256sum") {
 		t.Errorf("self-managed gitlab setup page misses the CI snippet with checksum verification:\n%s", body)
 	}
@@ -746,7 +746,7 @@ func TestSetupPageHostedOmitsServer(t *testing.T) {
 	cb := get(f, "/oauth/bitbucket/callback?code=x&state="+url.QueryEscape(state), stateCk)
 	sess := cookieNamed(t, cb, sessionCookie)
 
-	body := get(f, "/workspaces/acme/setup", sess).Body.String()
+	body := get(f, "/workspaces/bitbucket/acme/setup", sess).Body.String()
 	if strings.Contains(body, "GOCOV_SERVER") {
 		t.Errorf("hosted onboarding should omit GOCOV_SERVER:\n%s", body)
 	}
@@ -799,23 +799,23 @@ func TestGitLabSubgroupWorkspace(t *testing.T) {
 	sess := signInVia(t, f, "gitlab")
 
 	// The settings and setup pages live behind the %2F-encoded prefix.
-	for _, path := range []string{"/workspaces/grp%2Fsub", "/workspaces/grp%2Fsub/setup"} {
+	for _, path := range []string{"/workspaces/gitlab/grp%2Fsub", "/workspaces/gitlab/grp%2Fsub/setup"} {
 		rec := get(f, path, sess)
 		if rec.Code != http.StatusOK {
 			t.Errorf("GET %s: status = %d, want 200", path, rec.Code)
 		}
 	}
 	// The raw-slash form must not resolve to the workspace pages.
-	if rec := get(f, "/workspaces/grp/sub", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/workspaces/gitlab/grp/sub", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("raw-slash workspace path: status = %d, want 404", rec.Code)
 	}
 
 	// Membership at subgroup depth scopes repo visibility: the subgroup's
 	// project is visible, the sibling project outside it is not.
-	if rec := get(f, "/repos/grp/sub/proj", sess); rec.Code != http.StatusOK {
+	if rec := get(f, "/repos/gitlab/grp/sub/proj", sess); rec.Code != http.StatusOK {
 		t.Errorf("member repo page: status = %d, want 200", rec.Code)
 	}
-	if rec := get(f, "/repos/grp/elsewhere", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/repos/gitlab/grp/elsewhere", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member repo page: status = %d, want 404", rec.Code)
 	}
 
@@ -823,7 +823,7 @@ func TestGitLabSubgroupWorkspace(t *testing.T) {
 	// First-upload done state — and it still resolves through the
 	// %2F-encoded prefix. (The forge-specific CI snippet, shown only before
 	// the first upload, is covered by TestSetupPageGitLabSnippet.)
-	rec := get(f, "/workspaces/grp%2Fsub/setup", sess)
+	rec := get(f, "/workspaces/gitlab/grp%2Fsub/setup", sess)
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Coverage is flowing") {
 		t.Errorf("subgroup setup done page: status %d\n%s", rec.Code, rec.Body)
 	}

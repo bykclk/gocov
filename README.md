@@ -1,6 +1,6 @@
 # gocov
 
-[![coverage](https://app.gocov.dev/badge/gocov/gocov.svg)](https://app.gocov.dev/repos/gocov/gocov?ref=badge)
+[![coverage](https://app.gocov.dev/badge/github/gocov/gocov.svg)](https://app.gocov.dev/repos/github/gocov/gocov?ref=badge)
 
 Diff coverage, pull request comments and merge gates for GitHub, GitLab and Bitbucket Cloud — an open-source
 Coveralls/Codecov alternative. Use the hosted service at [gocov.dev](https://gocov.dev) (public repos free forever,
@@ -35,7 +35,7 @@ From then on every push carries its own coverage: a status and delta on the comm
 pull request, a gate that can block the merge, and a badge that is one line of markdown:
 
 ```markdown
-[![coverage](https://app.gocov.dev/badge/myworkspace/myrepo.svg)](https://app.gocov.dev/repos/myworkspace/myrepo?ref=badge)
+[![coverage](https://app.gocov.dev/badge/github/myworkspace/myrepo.svg)](https://app.gocov.dev/repos/github/myworkspace/myrepo?ref=badge)
 ```
 
 ## What you get

@@ -30,8 +30,8 @@
     <p class="sub">{{.Current.RepoCount}} {{if eq .Current.RepoCount 1}}repository{{else}}repositories{{end}}{{if .Stats.HasCoverage}} &middot; {{pct .Stats.CoveragePct}} covered{{end}}</p>
   </div>
   <span class="spacer"></span>
-  {{if .Current.Tracked}}<a class="btn" href="/workspaces/{{pathesc .Current.Prefix}}">Workspace settings</a>{{end}}
-  {{if $.CanOnboard}}<a class="btn primary" href="{{if .Current.Tracked}}/workspaces/{{pathesc .Current.Prefix}}/setup{{else}}/onboarding{{end}}">Add a repository</a>{{end}}
+  {{with .Current.Workspace}}<a class="btn" href="{{wsurl . ""}}">Workspace settings</a>{{end}}
+  {{if $.CanOnboard}}<a class="btn primary" href="{{with .Current.Workspace}}{{wsurl . "/setup"}}{{else}}/onboarding{{end}}">Add a repository</a>{{end}}
 </div>
 
 <div class="stats cols-3">
@@ -84,12 +84,12 @@
     <tbody>
       {{range .Repos}}
       <tr data-state="{{.State}}" data-name="{{.Name}}" data-hasreport="{{.HasReport}}" data-cov="{{printf "%.4f" .CovVal}}" data-hasdelta="{{.HasDelta}}" data-drop="{{printf "%.4f" .DropVal}}" data-uploaded="{{.UpUnix}}">
-        <td><a href="/repos/{{.Slug}}" class="repo">{{.Name}}</a></td>
+        <td><a href="{{repourl .Repo}}" class="repo">{{.Name}}</a></td>
         <td>{{if .Latest}}{{template "covbar" .Latest.TotalPct}}{{else}}<span class="muted">&mdash;</span>{{end}}</td>
         <td class="num">{{if .Delta}}<span class="delta {{.Delta.Class}}">{{.Delta.Arrow}} {{.Delta.Text}}</span>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
         <td>{{if .Spark}}<svg class="spark" viewBox="0 0 76 22" aria-hidden="true"><path class="{{.Spark.Class}}" d="{{.Spark.Path}}"></path>{{if .Spark.Tail}}<path d="{{.Spark.Tail}}" stroke-dasharray="3 3" opacity=".5"></path>{{end}}</svg>{{else}}<span class="muted small">&mdash;</span>{{end}}</td>
         <td>
-          {{if eq .Gate "pass"}}<span class="chip pass">&#10003; Passing</span>{{else if eq .Gate "fail"}}<span class="chip fail">&#10007; Failing</span>{{else}}<a href="/repo-settings/{{.Slug}}" class="chip plain">Set a gate</a>{{end}}
+          {{if eq .Gate "pass"}}<span class="chip pass">&#10003; Passing</span>{{else if eq .Gate "fail"}}<span class="chip fail">&#10007; Failing</span>{{else}}<a href="{{settingsurl .Repo ""}}" class="chip plain">Set a gate</a>{{end}}
           {{if .Stale}} <span class="chip warn">Stale</span>{{end}}
         </td>
         <td class="muted small">{{if .Latest}}{{.LastAgo}}{{else}}never{{end}}</td>
@@ -100,13 +100,13 @@
   <div class="empty" id="repo-empty" hidden>No repositories match.</div>
   {{else}}
   {{if $.CanOnboard}}
-  <div class="empty">No repositories in this workspace yet. Push coverage from CI and repos register themselves on their first upload. <a href="{{if .Current.Tracked}}/workspaces/{{pathesc .Current.Prefix}}/setup{{else}}/onboarding{{end}}">Setup instructions</a></div>
+  <div class="empty">No repositories in this workspace yet. Push coverage from CI and repos register themselves on their first upload. <a href="{{with .Current.Workspace}}{{wsurl . "/setup"}}{{else}}/onboarding{{end}}">Setup instructions</a></div>
   {{else}}
   <div class="empty">No repositories yet. Enable sign-in so a member can register a workspace and get an upload token; repos then register themselves on their first upload.</div>
   {{end}}
   {{end}}
 </div>
-{{if .Repos}}<p class="hint" style="margin:10px 0 0">Repositories appear here automatically on their first upload. <a href="{{if .Current.Tracked}}/workspaces/{{pathesc .Current.Prefix}}/setup{{else}}/onboarding{{end}}">Setup instructions</a></p>{{end}}
+{{if .Repos}}<p class="hint" style="margin:10px 0 0">Repositories appear here automatically on their first upload. <a href="{{with .Current.Workspace}}{{wsurl . "/setup"}}{{else}}/onboarding{{end}}">Setup instructions</a></p>{{end}}
 
 <script>
 (function(){

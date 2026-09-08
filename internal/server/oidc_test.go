@@ -249,7 +249,7 @@ func TestOIDCUntracked(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
 	assertErrorContains(t, rec, "registered stranger")
-	if _, err := f.store.RepoBySlug(t.Context(), "stranger/repo"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.store.RepoBySlug(t.Context(), "github", "stranger/repo"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("repo registered under no workspace (err = %v)", err)
 	}
 }
@@ -268,7 +268,7 @@ func TestOIDCRegistersRepo(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	repo, err := f.store.RepoBySlug(t.Context(), "acme/gadgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "github", "acme/gadgets")
 	if err != nil {
 		t.Fatalf("repo not registered: %v", err)
 	}
@@ -277,6 +277,35 @@ func TestOIDCRegistersRepo(t *testing.T) {
 	}
 	if len(f.forge.StatusCalls) != 1 {
 		t.Errorf("got %d status calls, want 1", len(f.forge.StatusCalls))
+	}
+}
+
+// Names are scoped per forge: a GitHub token for a slug that Bitbucket
+// already tracks registers the GitHub repo beside it — two tenants, the
+// Bitbucket row untouched — where the global namespace used to refuse it.
+func TestOIDCRegistersBesideAnotherForgesNamesake(t *testing.T) {
+	f, is := newOIDCFixture(t)
+	bb := &store.Repo{Forge: "bitbucket", Slug: "acme/gadgets", Token: "bb-token", DefaultBranch: "main"}
+	if err := f.store.CreateRepo(t.Context(), bb); err != nil {
+		t.Fatal(err)
+	}
+	claims := githubClaims("https://gocov.example")
+	claims["repository"] = "acme/gadgets"
+	tok := is.mint(t, claims)
+
+	rec := doOIDCUpload(t, f, tok, map[string]string{"repo": "acme/gadgets"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	gh, err := f.store.RepoBySlug(t.Context(), "github", "acme/gadgets")
+	if err != nil {
+		t.Fatalf("github repo not registered beside the bitbucket one: %v", err)
+	}
+	if gh.ID == bb.ID {
+		t.Error("the upload landed on the bitbucket repo")
+	}
+	if got, _ := f.store.RepoByID(t.Context(), bb.ID); got == nil || got.Token != "bb-token" {
+		t.Errorf("bitbucket namesake changed: %+v", got)
 	}
 }
 
@@ -293,7 +322,7 @@ func TestOIDCRegisterRefusedWhenForgeHasNoRepo(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if _, err := f.store.RepoBySlug(t.Context(), "acme/ghost"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.store.RepoBySlug(t.Context(), "github", "acme/ghost"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("repo registered despite the forge refusing it (err = %v)", err)
 	}
 }

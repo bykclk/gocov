@@ -1,6 +1,6 @@
 {{define "title"}}{{.Repo.Slug}} code coverage — gocov{{end}}
 {{define "head"}}<meta name="description" content="Code coverage for {{.Repo.Slug}}, tracked by gocov: current total, coverage trend and where coverage is missing.">
-<link rel="canonical" href="{{.BaseURL}}/repos/{{.Repo.Slug}}">
+<link rel="canonical" href="{{.BaseURL}}{{repourl .Repo}}">
 {{end}}
 {{define "content"}}
 <div class="crumbs"><a href="/">Repos</a> / <code>{{.Repo.Slug}}</code></div>
@@ -12,17 +12,17 @@
   </div>
   <span class="spacer"></span>
   <select class="input" name="branch"
-          hx-get="/repos/{{.Repo.Slug}}" hx-target="#uploads" hx-select="#uploads"
+          hx-get="{{repourl .Repo}}" hx-target="#uploads" hx-select="#uploads"
           hx-swap="outerHTML" hx-push-url="true">
     <option value="">All branches</option>
     {{$sel := .Branch}}
     {{range .Branches}}<option value="{{.}}"{{if eq . $sel}} selected{{end}}>{{.}}</option>{{end}}
   </select>
-  {{if .WSPrefix}}<a class="btn" href="/repo-settings/{{.Repo.Slug}}">Settings</a>{{end}}
+  {{if .Settings}}<a class="btn" href="{{settingsurl .Repo ""}}">Settings</a>{{end}}
 </div>
 
 <div class="badgebox">
-  <img alt="coverage badge" src="/badge/{{.Repo.Slug}}.svg">
+  <img alt="coverage badge" src="{{badgeurl .Repo}}">
   <input id="badge-md" class="input mono" readonly onfocus="this.select()"
          style="flex: 1; min-width: 0; font-size: 12px"
          value="{{.BadgeMarkdown}}">
@@ -108,10 +108,10 @@
 </div>
 <div class="pagination">
   {{if gt .Page 0}}<a class="btn" href="?branch={{.Branch}}&page={{.PrevPage}}"
-     hx-get="/repos/{{.Repo.Slug}}?branch={{.Branch}}&page={{.PrevPage}}" hx-target="#uploads"
+     hx-get="{{repourl .Repo}}?branch={{.Branch}}&page={{.PrevPage}}" hx-target="#uploads"
      hx-select="#uploads" hx-swap="outerHTML" hx-push-url="true">&larr; Newer</a>{{end}}
   {{if .HasOlder}}<a class="btn" href="?branch={{.Branch}}&page={{.NextPage}}"
-     hx-get="/repos/{{.Repo.Slug}}?branch={{.Branch}}&page={{.NextPage}}" hx-target="#uploads"
+     hx-get="{{repourl .Repo}}?branch={{.Branch}}&page={{.NextPage}}" hx-target="#uploads"
      hx-select="#uploads" hx-swap="outerHTML" hx-push-url="true">Older &rarr;</a>{{end}}
 </div>
 </div>

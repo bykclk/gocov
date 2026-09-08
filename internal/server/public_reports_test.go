@@ -91,7 +91,7 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 	f := newPublicFixture(t, store.VisibilityPublic, true)
 	u := seedUpload(t, f)
 
-	repoPage := get(f, "/repos/acme/widgets")
+	repoPage := get(f, "/repos/bitbucket/acme/widgets")
 	if repoPage.Code != http.StatusOK {
 		t.Fatalf("repo page anonymous: status = %d", repoPage.Code)
 	}
@@ -101,7 +101,7 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 	}
 	// Read-only: no settings link, no member chrome — and the visitor CTA
 	// band is there.
-	if strings.Contains(body, "/repo-settings/") {
+	if strings.Contains(body, "/repo-settings/bitbucket/") {
 		t.Error("anonymous repo page shows the settings link")
 	}
 	if strings.Contains(body, "Sign out") {
@@ -136,7 +136,7 @@ func TestPublicRepoReportPagesOpenAnonymously(t *testing.T) {
 
 	// Crawlers probe with HEAD; the mux serves it through the GET route,
 	// so the sessionless pass-through must admit it too.
-	headReq := httptest.NewRequest(http.MethodHead, "/repos/acme/widgets", nil)
+	headReq := httptest.NewRequest(http.MethodHead, "/repos/bitbucket/acme/widgets", nil)
 	headRec := httptest.NewRecorder()
 	f.srv.ServeHTTP(headRec, headReq)
 	if headRec.Code != http.StatusOK {
@@ -164,8 +164,8 @@ func TestNonPublicRepoKeepsLoginWallForAnonymous(t *testing.T) {
 		// Today's behavior exactly, and indistinguishable from a slug or
 		// upload that does not exist — a signed-out probe learns nothing.
 		for _, path := range []string{
-			"/repos/acme/widgets",
-			"/repos/no/such",
+			"/repos/bitbucket/acme/widgets",
+			"/repos/bitbucket/no/such",
 			"/uploads/1",
 			"/uploads/1/profile",
 			"/uploads/1/files/a.go",
@@ -186,7 +186,7 @@ func TestRepoSettingsSwitchClosesPublicPages(t *testing.T) {
 	if err := f.store.UpdateRepo(t.Context(), f.repo); err != nil {
 		t.Fatal(err)
 	}
-	wantLoginRedirect(t, get(f, "/repos/acme/widgets"), "/repos/acme/widgets")
+	wantLoginRedirect(t, get(f, "/repos/bitbucket/acme/widgets"), "/repos/bitbucket/acme/widgets")
 	wantLoginRedirect(t, get(f, "/uploads/1"), "/uploads/1")
 }
 
@@ -194,7 +194,7 @@ func TestInstanceSwitchClosesPublicPages(t *testing.T) {
 	f := newPublicFixture(t, store.VisibilityPublic, false)
 	seedUpload(t, f)
 
-	wantLoginRedirect(t, get(f, "/repos/acme/widgets"), "/repos/acme/widgets")
+	wantLoginRedirect(t, get(f, "/repos/bitbucket/acme/widgets"), "/repos/bitbucket/acme/widgets")
 	wantLoginRedirect(t, get(f, "/uploads/1"), "/uploads/1")
 	wantLoginRedirect(t, get(f, "/uploads/1/profile"), "/uploads/1/profile")
 }
@@ -204,7 +204,7 @@ func TestMemberViewOfPublicRepoIsUnchanged(t *testing.T) {
 	seedUpload(t, f)
 	sess := signIn(t, f, "/")
 
-	rec := get(f, "/repos/acme/widgets", sess)
+	rec := get(f, "/repos/bitbucket/acme/widgets", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member repo page: status = %d", rec.Code)
 	}
@@ -212,7 +212,7 @@ func TestMemberViewOfPublicRepoIsUnchanged(t *testing.T) {
 	if strings.Contains(body, "public-cta") {
 		t.Error("signed-in member sees the visitor CTA band")
 	}
-	if !strings.Contains(body, "/repo-settings/acme/widgets") {
+	if !strings.Contains(body, "/repo-settings/bitbucket/acme/widgets") {
 		t.Error("member repo page misses the settings link")
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
@@ -255,12 +255,12 @@ func TestSignedInNonMemberGetsReadOnlyPublicView(t *testing.T) {
 	f := &fixture{srv: srv, store: st, repo: repo}
 	sess := signIn(t, f, "/")
 
-	rec := get(f, "/repos/acme/widgets", sess)
+	rec := get(f, "/repos/bitbucket/acme/widgets", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("non-member on public repo: status = %d", rec.Code)
 	}
 	body := rec.Body.String()
-	if strings.Contains(body, "/repo-settings/") {
+	if strings.Contains(body, "/repo-settings/bitbucket/") {
 		t.Error("signed-in non-member sees the settings link")
 	}
 	if strings.Contains(body, "public-cta") {
@@ -273,7 +273,7 @@ func TestPublicReportsToggleInRepoSettings(t *testing.T) {
 	sess := signIn(t, f, "/")
 
 	// The switch renders for a public repo.
-	page := get(f, "/repo-settings/acme/widgets", sess)
+	page := get(f, "/repo-settings/bitbucket/acme/widgets", sess)
 	if page.Code != http.StatusOK {
 		t.Fatalf("settings page: status = %d", page.Code)
 	}
@@ -282,25 +282,25 @@ func TestPublicReportsToggleInRepoSettings(t *testing.T) {
 	}
 
 	// Saving without the checkbox turns public pages off at once.
-	rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{"default_branch": {"main"}}, sess)
+	rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{"default_branch": {"main"}}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	repo, err := f.store.RepoBySlug(t.Context(), "acme/widgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "bitbucket", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !repo.PublicReportsDisabled {
 		t.Error("saving with the checkbox off did not disable public reports")
 	}
-	wantLoginRedirect(t, get(f, "/repos/acme/widgets"), "/repos/acme/widgets")
+	wantLoginRedirect(t, get(f, "/repos/bitbucket/acme/widgets"), "/repos/bitbucket/acme/widgets")
 
 	// Saving with the checkbox on reopens them.
-	rec = postForm(f, "/repo-settings/save/acme/widgets", url.Values{"default_branch": {"main"}, "public_reports": {"on"}}, sess)
+	rec = postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{"default_branch": {"main"}, "public_reports": {"on"}}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("re-save: status = %d", rec.Code)
 	}
-	if rec := get(f, "/repos/acme/widgets"); rec.Code != http.StatusOK {
+	if rec := get(f, "/repos/bitbucket/acme/widgets"); rec.Code != http.StatusOK {
 		t.Errorf("public page after reopening: status = %d", rec.Code)
 	}
 }
@@ -309,15 +309,15 @@ func TestPrivateRepoSettingsHideTheSwitchAndKeepTheValue(t *testing.T) {
 	f := newPublicFixture(t, store.VisibilityPrivate, true)
 	sess := signIn(t, f, "/")
 
-	page := get(f, "/repo-settings/acme/widgets", sess)
+	page := get(f, "/repo-settings/bitbucket/acme/widgets", sess)
 	if strings.Contains(page.Body.String(), "Public reports") {
 		t.Error("private repo settings render the Public reports switch")
 	}
 	// A save without the (absent) checkbox must not flip the stored value.
-	if rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{"default_branch": {"main"}}, sess); rec.Code != http.StatusSeeOther {
+	if rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{"default_branch": {"main"}}, sess); rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: status = %d", rec.Code)
 	}
-	repo, err := f.store.RepoBySlug(t.Context(), "acme/widgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "bitbucket", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +338,7 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("upload: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	repo, err := f.store.RepoBySlug(t.Context(), "acme/widgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "bitbucket", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +358,7 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 	if got := len(f.forge.VisibilityCalls); got != 1 {
 		t.Errorf("visibility calls after fresh-answer upload = %d, want still 1", got)
 	}
-	if repo, _ = f.store.RepoBySlug(t.Context(), "acme/widgets"); repo.Visibility != store.VisibilityPublic {
+	if repo, _ = f.store.RepoBySlug(t.Context(), "bitbucket", "acme/widgets"); repo.Visibility != store.VisibilityPublic {
 		t.Errorf("fresh-answer upload rewrote visibility to %q", repo.Visibility)
 	}
 
@@ -368,7 +368,7 @@ func TestUploadRefreshesVisibility(t *testing.T) {
 	if rec := doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
 		t.Fatalf("third upload: status = %d", rec.Code)
 	}
-	repo, err = f.store.RepoBySlug(t.Context(), "acme/widgets")
+	repo, err = f.store.RepoBySlug(t.Context(), "bitbucket", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -417,13 +417,13 @@ func TestStalePublicAnswerIsReverifiedWhenServed(t *testing.T) {
 
 	// The stale answer still serves — the re-check must not cost this
 	// request a forge round-trip — but it kicks the re-verification off.
-	if rec := get(f, "/repos/acme/widgets"); rec.Code != http.StatusOK {
+	if rec := get(f, "/repos/bitbucket/acme/widgets"); rec.Code != http.StatusOK {
 		t.Fatalf("stale public page: status = %d", rec.Code)
 	}
 	waitForVisibility(t, st, "acme/widgets", store.VisibilityPrivate)
 
 	// The answer landed: the pages are closed for the requests after it.
-	wantLoginRedirect(t, get(f, "/repos/acme/widgets"), "/repos/acme/widgets")
+	wantLoginRedirect(t, get(f, "/repos/bitbucket/acme/widgets"), "/repos/bitbucket/acme/widgets")
 	wantLoginRedirect(t, get(f, "/uploads/1"), "/uploads/1")
 }
 
@@ -434,7 +434,7 @@ func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		stored, err := st.RepoBySlug(t.Context(), slug)
+		stored, err := st.RepoBySlug(t.Context(), "bitbucket", slug)
 		if err != nil {
 			t.Fatal(err)
 		}

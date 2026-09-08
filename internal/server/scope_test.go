@@ -80,7 +80,7 @@ func TestTwoTenantIsolation(t *testing.T) {
 
 	// Non-member deep links 404 (D3: 404, not 403 — existence stays hidden).
 	for _, path := range []string{
-		"/repos/beta/gizmos",
+		"/repos/bitbucket/beta/gizmos",
 		fmt.Sprintf("/uploads/%d", betaUp.ID),
 		fmt.Sprintf("/uploads/%d/files/main.go", betaUp.ID),
 	} {
@@ -90,7 +90,7 @@ func TestTwoTenantIsolation(t *testing.T) {
 	}
 
 	// The owning tenant still reaches its own pages.
-	if rec := get(f, "/repos/beta/gizmos", ckB); rec.Code != http.StatusOK {
+	if rec := get(f, "/repos/bitbucket/beta/gizmos", ckB); rec.Code != http.StatusOK {
 		t.Errorf("member GET own repo = %d, want 200", rec.Code)
 	}
 	if rec := get(f, fmt.Sprintf("/uploads/%d", betaUp.ID), ckB); rec.Code != http.StatusOK {
@@ -110,10 +110,10 @@ func TestOpenModeIgnoresScoping(t *testing.T) {
 	if body := get(f, "/").Body.String(); !strings.Contains(body, `data-n="acme"`) || !strings.Contains(body, `data-n="beta"`) {
 		t.Errorf("open mode must offer every workspace in the switcher:\n%s", body)
 	}
-	if body := get(f, "/?ws=beta").Body.String(); !strings.Contains(body, `href="/repos/beta/gizmos"`) {
+	if body := get(f, "/?ws=bitbucket%2Fbeta").Body.String(); !strings.Contains(body, `href="/repos/bitbucket/beta/gizmos"`) {
 		t.Errorf("open mode must list the selected workspace's repos:\n%s", body)
 	}
-	if rec := get(f, "/repos/beta/gizmos"); rec.Code != http.StatusOK {
+	if rec := get(f, "/repos/bitbucket/beta/gizmos"); rec.Code != http.StatusOK {
 		t.Errorf("open mode repo page = %d, want 200", rec.Code)
 	}
 	if rec := get(f, fmt.Sprintf("/uploads/%d", betaUp.ID)); rec.Code != http.StatusOK {

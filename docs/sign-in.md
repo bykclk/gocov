@@ -53,10 +53,11 @@ the username itself, so user-namespace projects admit their owner.
 ## The access model
 
 From then on every UI page requires signing in. Access is decided at login time by membership: by default, members of
-any workspace/org the instance tracks (registered workspaces and the workspace part of registered repo slugs) may sign
-in, and everyone else gets a clear denial page; on GitHub the account's own username also counts, so user-namespace
-repos admit their owner. Set `GOCOV_ALLOWED_WORKSPACES`
-(comma-separated workspace/org slugs) to replace the derived set with an explicit list. Accounts are provisioned on
+any workspace/org the instance tracks (registered workspaces and the workspace part of registered repo slugs) on the
+forge they sign in with may sign in, and everyone else gets a clear denial page; on GitHub the account's own username
+also counts, so user-namespace repos admit their owner. Names are scoped per forge — tracking the GitHub org `acme`
+admits nobody from a Bitbucket workspace that happens to be called `acme`. Set `GOCOV_ALLOWED_WORKSPACES`
+(comma-separated workspace/org slugs, matched on every forge) to replace the derived set with an explicit list. Accounts are provisioned on
 first successful sign-in — there is no user bookkeeping, and gocov never sees or stores passwords (the forge tokens are
 discarded right after login).
 

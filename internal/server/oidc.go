@@ -100,8 +100,8 @@ func bitbucketIssuerResolver(st store.Store) func(context.Context, string) (stri
 		if !ok {
 			return "", false
 		}
-		ws, err := st.WorkspaceByPrefix(ctx, workspace)
-		if err != nil || ws.Forge != "bitbucket" {
+		ws, err := st.WorkspaceByPrefix(ctx, "bitbucket", workspace)
+		if err != nil {
 			return "", false
 		}
 		return bitbucketIssuerPrefix + ws.Prefix + bitbucketIssuerSuffix, true
@@ -269,27 +269,23 @@ func (s *Server) oidcResolveBitbucket(w http.ResponseWriter, r *http.Request, to
 }
 
 // oidcLookup resolves a slug to what an OIDC upload may target: the repo
-// when it is tracked on the expected forge (ws is then nil — the caller
+// when it is tracked on the token's forge (ws is then nil — the caller
 // has no use for it), or the registered workspace the slug falls under
 // when it is not (repo is then nil, and the caller registers it once its
 // own checks pass). A slug under no registered workspace is the one
 // thing OIDC cannot create; that 404 is written here.
 func (s *Server) oidcLookup(w http.ResponseWriter, r *http.Request, slug, forgeName string) (repo *store.Repo, ws *store.Workspace, ok bool) {
 	ctx := r.Context()
-	repo, err := s.store.RepoBySlug(ctx, slug)
+	repo, err := s.store.RepoBySlug(ctx, forgeName, slug)
 	switch {
 	case err == nil:
-		if repo.Forge != forgeName {
-			httpError(w, http.StatusNotFound, "repo %q is not tracked as a %s repo", slug, forgeName)
-			return nil, nil, false
-		}
 		return repo, nil, true
 	case !errors.Is(err, store.ErrNotFound):
 		s.internalError(w, "looking up repo", err)
 		return nil, nil, false
 	}
 
-	ws, err = s.oidcWorkspaceFor(ctx, slug, forgeName)
+	ws, err = s.forges.LookupWorkspace(ctx, slug, forgeName)
 	if err != nil {
 		s.internalError(w, "looking up workspace", err)
 		return nil, nil, false
@@ -300,29 +296,6 @@ func (s *Server) oidcLookup(w http.ResponseWriter, r *http.Request, slug, forgeN
 		return nil, nil, false
 	}
 	return nil, ws, true
-}
-
-// oidcWorkspaceFor returns the registered workspace owning the slug's
-// prefix on the given forge, nil when there is none. Prefixes are tried
-// longest first, like core.Forges.WorkspaceFor, so a GitLab project below
-// a registered subgroup lands in that subgroup's workspace. A same-named
-// workspace on another forge is not a match: prefixes are globally
-// unique, so the name is simply taken.
-func (s *Server) oidcWorkspaceFor(ctx context.Context, slug, forgeName string) (*store.Workspace, error) {
-	for _, prefix := range core.SlugPrefixes(slug) {
-		ws, err := s.store.WorkspaceByPrefix(ctx, prefix)
-		if errors.Is(err, store.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if ws.Forge != forgeName {
-			return nil, nil
-		}
-		return ws, nil
-	}
-	return nil, nil
 }
 
 // oidcRegisterRepo registers a forge-verified slug under its workspace,

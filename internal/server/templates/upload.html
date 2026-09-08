@@ -1,7 +1,7 @@
 {{define "title"}}gocov — {{.Repo.Slug}} @ {{short .Upload.CommitSHA}}{{end}}
 {{define "content"}}
 {{$u := .Upload}}
-<div class="crumbs"><a href="/">Repos</a> / <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / <code>{{short $u.CommitSHA}}</code></div>
+<div class="crumbs"><a href="/">Repos</a> / <a href="{{repourl .Repo}}"><code>{{.Repo.Slug}}</code></a> / <code>{{short $u.CommitSHA}}</code></div>
 
 <div class="uphead">
   <h1>{{if $u.Meta.CommitMessage}}{{$u.Meta.CommitMessage}}{{else}}<span class="mono">{{short $u.CommitSHA}}</span>{{end}}</h1>

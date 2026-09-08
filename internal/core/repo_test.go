@@ -44,7 +44,7 @@ func TestRefreshVisibilityCachesForgeAnswer(t *testing.T) {
 	if repo.Visibility != store.VisibilityPublic {
 		t.Errorf("repo.Visibility = %q, want public", repo.Visibility)
 	}
-	stored, err := st.RepoBySlug(ctx, repo.Slug)
+	stored, err := st.RepoBySlug(ctx, repo.Forge, repo.Slug)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestRefreshVisibilityCachesForgeAnswer(t *testing.T) {
 	// Flipped private on the forge: the cache follows.
 	fg.Visibility = forge.VisibilityPrivate
 	p.RefreshVisibility(ctx, fg, repo)
-	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPrivate {
+	if stored, _ := st.RepoBySlug(ctx, repo.Forge, repo.Slug); stored.Visibility != store.VisibilityPrivate {
 		t.Errorf("stored visibility after flip = %q, want private", stored.Visibility)
 	}
 
@@ -82,7 +82,7 @@ func TestRefreshVisibilityCachesForgeAnswer(t *testing.T) {
 	fg.VisibilityErr = nil
 	fg.Visibility = "internal"
 	p.RefreshVisibility(ctx, fg, repo)
-	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPrivate {
+	if stored, _ := st.RepoBySlug(ctx, repo.Forge, repo.Slug); stored.Visibility != store.VisibilityPrivate {
 		t.Errorf("stored visibility after failures = %q, want private", stored.Visibility)
 	}
 	if !repo.VisibilityCheckedAt.Equal(old) {
@@ -106,7 +106,7 @@ func TestRefreshVisibilityFailsClosedWhenRepoIsGone(t *testing.T) {
 	if repo.Visibility != store.VisibilityPrivate {
 		t.Errorf("repo.Visibility after not-found = %q, want private", repo.Visibility)
 	}
-	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPrivate {
+	if stored, _ := st.RepoBySlug(ctx, repo.Forge, repo.Slug); stored.Visibility != store.VisibilityPrivate {
 		t.Errorf("stored visibility after not-found = %q, want private", stored.Visibility)
 	}
 }
@@ -171,13 +171,13 @@ func TestSetRepoVisibilityIgnoresStaleAnswers(t *testing.T) {
 	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, now.Add(-time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPrivate {
+	if stored, _ := st.RepoBySlug(ctx, repo.Forge, repo.Slug); stored.Visibility != store.VisibilityPrivate {
 		t.Errorf("a stale answer overwrote a fresher one: %q", stored.Visibility)
 	}
 	if err := st.SetRepoVisibility(ctx, repo.ID, store.VisibilityPublic, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if stored, _ := st.RepoBySlug(ctx, repo.Slug); stored.Visibility != store.VisibilityPublic {
+	if stored, _ := st.RepoBySlug(ctx, repo.Forge, repo.Slug); stored.Visibility != store.VisibilityPublic {
 		t.Errorf("a fresher answer was refused: %q", stored.Visibility)
 	}
 }
@@ -208,7 +208,7 @@ func waitForVisibility(t *testing.T, st *storemem.Store, slug, want string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		stored, err := st.RepoBySlug(t.Context(), slug)
+		stored, err := st.RepoBySlug(t.Context(), "bitbucket", slug)
 		if err != nil {
 			t.Fatal(err)
 		}

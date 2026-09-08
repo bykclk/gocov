@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gocov/gocov/internal/core"
 	"github.com/gocov/gocov/internal/store"
 )
 
@@ -19,7 +18,7 @@ import (
 // the group with reporting state and a settings page, but an untracked prefix
 // (open instances, or repos whose workspace was never registered) still gets a
 // group so its repos remain visible. The switcher moves between groups via
-// ?ws=<prefix>.
+// ?ws=<forge>/<prefix>.
 
 const dashStaleAfter = 14 * 24 * time.Hour
 
@@ -40,7 +39,6 @@ type dashboardView struct {
 type wsGroup struct {
 	Prefix    string
 	Forge     string
-	Tracked   bool
 	Workspace *store.Workspace
 	Initial   string // avatar letter
 	ForgeCls  string // gh / bb / gl — avatar colour
@@ -57,7 +55,7 @@ type wsGroup struct {
 // dashRepo is one row of the repositories table. The *Sort fields feed the
 // client-side sort control as plain data attributes.
 type dashRepo struct {
-	Slug    string
+	Repo    *store.Repo
 	Name    string // slug with the workspace prefix trimmed
 	Latest  *store.CommitReport
 	Delta   *deltaView
@@ -158,17 +156,20 @@ func (s *Server) buildDashboard(r *http.Request, selected string) (*dashboardVie
 	if err != nil {
 		return nil, err
 	}
-	groups := map[string]*wsGroup{}
-	order := []string{}
+	// Groups are keyed by wsKey: the GitHub org and the GitLab group of
+	// one name are two workspaces, and the switcher lists both.
+	groups := map[wsKey]*wsGroup{}
+	order := []wsKey{}
 	add := func(prefix, forge string, ws *store.Workspace) *wsGroup {
-		g := groups[prefix]
+		key := wsKey{forge, prefix}
+		g := groups[key]
 		if g == nil {
-			g = &wsGroup{Prefix: prefix, Forge: forge, Workspace: ws, Tracked: ws != nil}
-			groups[prefix] = g
-			order = append(order, prefix)
+			g = &wsGroup{Prefix: prefix, Forge: forge, Workspace: ws}
+			groups[key] = g
+			order = append(order, key)
 		}
 		if ws != nil && g.Workspace == nil {
-			g.Workspace, g.Tracked, g.Forge = ws, true, ws.Forge
+			g.Workspace = ws
 		}
 		return g
 	}
@@ -176,7 +177,7 @@ func (s *Server) buildDashboard(r *http.Request, selected string) (*dashboardVie
 		add(ws.Prefix, ws.Forge, ws)
 	}
 	for _, repo := range repos {
-		if !scope.allows(repo.Slug) {
+		if !scope.allows(repo) {
 			continue
 		}
 		g := add(s.groupPrefix(repo, tracked), repo.Forge, nil)
@@ -185,21 +186,24 @@ func (s *Server) buildDashboard(r *http.Request, selected string) (*dashboardVie
 	if len(order) == 0 {
 		return nil, nil
 	}
-	slices.Sort(order)
+	slices.SortFunc(order, func(a, b wsKey) int {
+		return cmp.Or(cmp.Compare(a.forge, b.forge), cmp.Compare(a.prefix, b.prefix))
+	})
 
-	// Resolve the selected group; fall back to the first when ?ws is missing or
-	// names a group the viewer cannot see.
-	cur := groups[selected]
+	// Resolve the selected group (?ws=forge/prefix); fall back to the
+	// first when ?ws is missing or names a group the viewer cannot see.
+	forge, prefix, _ := strings.Cut(selected, "/")
+	cur := groups[wsKey{forge, prefix}]
 	if cur == nil {
 		cur = groups[order[0]]
 	}
 
 	dv := &dashboardView{Current: cur}
-	for _, p := range order {
-		g := groups[p]
+	for _, k := range order {
+		g := groups[k]
 		s.fillGroupMeta(ctx, g)
 		g.Current = g == cur
-		g.Href = "/?ws=" + url.QueryEscape(g.Prefix) // GitLab prefixes carry slashes
+		g.Href = "/?ws=" + url.QueryEscape(k.String()) // GitLab prefixes carry slashes too
 		dv.Switcher = append(dv.Switcher, g)
 	}
 
@@ -222,12 +226,8 @@ func (s *Server) viewerWorkspaces(r *http.Request) ([]*store.Workspace, error) {
 // groupPrefix resolves the switcher group a repo belongs to: its most specific
 // tracked workspace prefix, or the leading slug segment when none is tracked.
 func (s *Server) groupPrefix(repo *store.Repo, tracked []*store.Workspace) string {
-	for _, prefix := range core.SlugPrefixes(repo.Slug) { // longest first
-		for _, ws := range tracked {
-			if ws.Forge == repo.Forge && ws.Prefix == prefix {
-				return prefix
-			}
-		}
+	if ws := owningWorkspace(repo, tracked); ws != nil {
+		return ws.Prefix
 	}
 	if i := strings.IndexByte(repo.Slug, '/'); i >= 0 {
 		return repo.Slug[:i]
@@ -269,7 +269,7 @@ func (s *Server) fillCurrent(r *http.Request, dv *dashboardView) {
 			continue
 		}
 		row := &dashRepo{
-			Slug: repo.Slug,
+			Repo: repo,
 			Name: strings.TrimPrefix(repo.Slug, cur.Prefix+"/"),
 		}
 		var latest *store.CommitReport
@@ -370,7 +370,7 @@ func (s *Server) collectAttention(dv *dashboardView, repo *store.Repo, row *dash
 		}
 		dv.Attention = append(dv.Attention, attnItem{
 			Kind: "bad", Icon: "✗", Repo: row.Name, Post: " is failing its coverage gate",
-			Msg: msg, Action: "Open repo", Href: "/repos/" + repo.Slug,
+			Msg: msg, Action: "Open repo", Href: repoURL(repo),
 		})
 	}
 	if stale {
@@ -379,14 +379,14 @@ func (s *Server) collectAttention(dv *dashboardView, repo *store.Repo, row *dash
 			Kind: "warn", Icon: "!", Pre: "No uploads from ", Repo: row.Name,
 			Post:   fmt.Sprintf(" in %d days", days),
 			Msg:    "Its last pipeline run did not reach the upload step; the coverage shown is stale.",
-			Action: "Open repo", Href: "/repos/" + repo.Slug,
+			Action: "Open repo", Href: repoURL(repo),
 		})
 	}
 	if !repo.Gate.Configured() && latest != nil {
 		dv.Attention = append(dv.Attention, attnItem{
 			Kind: "info", Icon: "?", Repo: row.Name, Post: " has no coverage gate",
 			Msg:    "Uploads are recorded, but nothing blocks a drop.",
-			Action: "Set a gate", Href: "/repo-settings/" + repo.Slug,
+			Action: "Set a gate", Href: repoSettingsURL(repo, ""),
 		})
 	}
 }
@@ -395,7 +395,7 @@ func (s *Server) collectAttention(dv *dashboardView, repo *store.Repo, row *dash
 // workspace connection. Untracked groups (or deployments without a one-click
 // mechanism) read as not connected.
 func (s *Server) fillReporting(st *dashStats, g *wsGroup) {
-	if !g.Tracked {
+	if g.Workspace == nil {
 		st.Reporting, st.ReportingState = "Not connected", "off"
 		return
 	}

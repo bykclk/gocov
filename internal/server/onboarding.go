@@ -22,7 +22,7 @@ import (
 //
 // The Workspace step (rail 0) lives at /onboarding and has three faces —
 // install, pick and ready (with the reporting capability card). Wire up CI
-// (rail 1) and First upload (rail 2) live at /workspaces/{prefix}/setup.
+// (rail 1) and First upload (rail 2) live at /workspaces/{forge}/{prefix}/setup.
 // Register and the GitHub App install redirect to /onboarding?ws={prefix}
 // (the ready state); "Continue to CI" leads to the setup page.
 
@@ -37,7 +37,8 @@ type railStep struct {
 
 // onboardingRail builds the three-stage rail for the given active step.
 // Labels are identical across forges; only the Workspace subline differs.
-func onboardingRail(active int, forge, prefix string, hasRepos bool) []railStep {
+// ws is nil on the Workspace step itself, before one is chosen.
+func onboardingRail(active int, forge string, ws *store.Workspace, hasRepos bool) []railStep {
 	labels := [3]string{"Workspace", "Wire up CI", "First upload"}
 	sub := [3]string{"Chosen here", "The upload step", "Push a commit"}
 	if forge == "github" {
@@ -63,8 +64,8 @@ func onboardingRail(active int, forge, prefix string, hasRepos bool) []railStep 
 	if steps[0].State == "done" {
 		steps[0].Href = "/onboarding"
 	}
-	if steps[1].State == "done" && prefix != "" {
-		steps[1].Href = workspaceURL(prefix, "/setup")
+	if steps[1].State == "done" && ws != nil {
+		steps[1].Href = workspaceURL(ws, "/setup")
 	}
 	return steps
 }
@@ -74,7 +75,8 @@ func onboardingRail(active int, forge, prefix string, hasRepos bool) []railStep 
 // the zero-membership landing.
 //
 // With ?ws={prefix} it shows the "workspace ready" face for a freshly
-// created/selected workspace, including the reporting capability card.
+// created/selected workspace on the user's forge, including the reporting
+// capability card.
 // Otherwise it shows the install prompt (GitHub) or the membership picker
 // (Bitbucket/GitLab).
 func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +99,7 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 			"Account":    u.DisplayName,
 			"Workspace":  ws,
 			"Owner":      role == store.RoleOwner,
-			"Rail":       onboardingRail(0, ws.Forge, ws.Prefix, false),
+			"Rail":       onboardingRail(0, ws.Forge, ws, false),
 		}
 		s.addGitHubAppData(r, ws, data)
 		s.addGrantData(ws, data)
@@ -120,7 +122,7 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 		"ForgeLabel":      providerLabel(u.Forge),
 		"Account":         u.DisplayName,
 		"MembershipCount": len(u.ForgeWorkspaces),
-		"Rail":            onboardingRail(0, u.Forge, "", false),
+		"Rail":            onboardingRail(0, u.Forge, nil, false),
 	}
 	if ghApp {
 		data["WSState"] = "install"
@@ -137,10 +139,11 @@ func (s *Server) handleOnboarding(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "onboarding.html", data)
 }
 
-// userWorkspace returns the workspace the user belongs to with this prefix
-// and their role in it, or nil — the membership gate for the ready state.
+// userWorkspace returns the workspace on the user's forge with this prefix
+// that the user belongs to, and their role in it, or nil — the membership
+// gate for the ready state.
 func (s *Server) userWorkspace(r *http.Request, u *store.User, prefix string) (*store.Workspace, store.Role) {
-	ws, err := s.store.WorkspaceByPrefix(r.Context(), prefix)
+	ws, err := s.store.WorkspaceByPrefix(r.Context(), u.Forge, prefix)
 	if err != nil {
 		return nil, ""
 	}
@@ -165,19 +168,20 @@ func (s *Server) reportingState(ws *store.Workspace, data map[string]any) {
 	case "bitbucket":
 		data["ReportingConnected"] = ws.BitbucketGrantAccount != ""
 		data["GrantAccount"] = ws.BitbucketGrantAccount
-		data["GrantURL"] = workspaceURL(ws.Prefix, "/bitbucket/connect") + "?from=onboarding"
+		data["GrantURL"] = workspaceURL(ws, "/connect") + "?from=onboarding"
 	case "gitlab":
 		data["ReportingConnected"] = ws.GitLabGrantAccount != ""
 		data["GrantAccount"] = ws.GitLabGrantAccount
-		data["GrantURL"] = workspaceURL(ws.Prefix, "/gitlab/connect") + "?from=onboarding"
+		data["GrantURL"] = workspaceURL(ws, "/connect") + "?from=onboarding"
 	}
 }
 
 // onboardingReadyURL is the redirect target after a workspace is created
 // (register claim or GitHub App install): the ready state that shows the
-// reporting card before CI.
-func onboardingReadyURL(prefix string) string {
-	return "/onboarding?ws=" + url.QueryEscape(prefix)
+// reporting card before CI. Only the prefix rides along — the forge is the
+// signed-in user's, and the ready state is theirs alone.
+func onboardingReadyURL(ws *store.Workspace) string {
+	return "/onboarding?ws=" + url.QueryEscape(ws.Prefix)
 }
 
 // The connect flow (Bitbucket/GitLab grant) returns to wherever it started:
@@ -208,11 +212,11 @@ func splitConnectState(v string) (state, prefix, from string) {
 
 // connectDest is where a completed connect lands: the onboarding
 // Workspace-ready state when it started there, else the settings page.
-func connectDest(prefix, from string) string {
+func connectDest(ws *store.Workspace, from string) string {
 	if from == "onboarding" {
-		return onboardingReadyURL(prefix)
+		return onboardingReadyURL(ws)
 	}
-	return workspaceURL(prefix, "") + "?connected=1"
+	return workspaceURL(ws, "?connected=1")
 }
 
 // setupViewData assembles the steps 2-3 payload (CI snippet, token and the
@@ -299,7 +303,7 @@ func connectionBroken(ws *store.Workspace) bool {
 // step. Statements and files are deliberately left for later (the done card
 // renders them as dashed placeholders); lines and coverage are enough.
 type firstReportView struct {
-	Slug        string
+	Repo        *store.Repo
 	Branch      string
 	CommitShort string
 	Pct         string
@@ -320,7 +324,7 @@ func (s *Server) firstReport(r *http.Request, repos []*store.Repo) *firstReportV
 			commit = commit[:7]
 		}
 		return &firstReportView{
-			Slug:        repo.Slug,
+			Repo:        repo,
 			Branch:      rep.Branch,
 			CommitShort: commit,
 			Pct:         fmt.Sprintf("%.1f", rep.TotalPct),

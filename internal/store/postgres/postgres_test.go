@@ -55,7 +55,7 @@ func TestRepoLifecycle(t *testing.T) {
 	// All lookups return the same row.
 	for name, get := range map[string]func() (*store.Repo, error){
 		"by id":    func() (*store.Repo, error) { return st.RepoByID(ctx, repo.ID) },
-		"by slug":  func() (*store.Repo, error) { return st.RepoBySlug(ctx, "acme/widgets") },
+		"by slug":  func() (*store.Repo, error) { return st.RepoBySlug(ctx, "bitbucket", "acme/widgets") },
 		"by token": func() (*store.Repo, error) { return st.RepoByToken(ctx, "tok-1") },
 	} {
 		got, err := get()
@@ -67,10 +67,24 @@ func TestRepoLifecycle(t *testing.T) {
 		}
 	}
 
-	// Unique constraints hold.
+	// Unique constraints hold — per forge: the same slug on another forge
+	// is another repo (github.com/acme/widgets beside bitbucket's).
 	dup := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "other", DefaultBranch: "main"}
 	if err := st.CreateRepo(ctx, dup); err == nil {
 		t.Error("duplicate slug must fail")
+	}
+	gh := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "tok-gh", DefaultBranch: "main"}
+	if err := st.CreateRepo(ctx, gh); err != nil {
+		t.Fatalf("same slug on another forge: %v", err)
+	}
+	if got, err := st.RepoBySlug(ctx, "github", "acme/widgets"); err != nil || got.ID != gh.ID {
+		t.Errorf("RepoBySlug(github) = %+v, %v; want the github row", got, err)
+	}
+	if got, err := st.RepoBySlug(ctx, "bitbucket", "acme/widgets"); err != nil || got.ID != repo.ID {
+		t.Errorf("RepoBySlug(bitbucket) = %+v, %v; want the bitbucket row", got, err)
+	}
+	if err := st.DeleteRepo(ctx, gh.ID); err != nil {
+		t.Fatal(err)
 	}
 
 	// ListRepos is sorted by slug.
@@ -192,7 +206,7 @@ func TestRepoLifecycle(t *testing.T) {
 	if err := st.UpdateRepo(ctx, &store.Repo{ID: 9999, Slug: "x/y", Token: "t"}); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("UpdateRepo missing = %v", err)
 	}
-	if _, err := st.RepoBySlug(ctx, "no/such"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.RepoBySlug(ctx, "bitbucket", "no/such"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("RepoBySlug missing = %v", err)
 	}
 	if err := st.SetRepoVisibility(ctx, 9999, store.VisibilityPublic, time.Now()); !errors.Is(err, store.ErrNotFound) {
@@ -218,7 +232,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	}
 
 	for name, get := range map[string]func() (*store.Workspace, error){
-		"by prefix": func() (*store.Workspace, error) { return st.WorkspaceByPrefix(ctx, "acme") },
+		"by prefix": func() (*store.Workspace, error) { return st.WorkspaceByPrefix(ctx, "bitbucket", "acme") },
 		"by token":  func() (*store.Workspace, error) { return st.WorkspaceByToken(ctx, "ws-tok") },
 	} {
 		got, err := get()
@@ -236,9 +250,20 @@ func TestWorkspaceLifecycle(t *testing.T) {
 		}
 	}
 
-	// Unique constraints.
+	// Unique constraints — per forge: the GitHub org "acme" is a tenant
+	// of its own beside the Bitbucket workspace.
 	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "other", DefaultBranch: "main"}); err == nil {
 		t.Error("duplicate prefix must fail")
+	}
+	gh := &store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}
+	if err := st.CreateWorkspace(ctx, gh); err != nil {
+		t.Fatalf("same prefix on another forge: %v", err)
+	}
+	if got, err := st.WorkspaceByPrefix(ctx, "github", "acme"); err != nil || got.ID != gh.ID {
+		t.Errorf("WorkspaceByPrefix(github) = %+v, %v; want the github row", got, err)
+	}
+	if err := st.DeleteWorkspace(ctx, gh.ID); err != nil {
+		t.Fatal(err)
 	}
 	if err := st.CreateWorkspace(ctx, &store.Workspace{Forge: "bitbucket", Prefix: "beta", Token: "ws-tok", DefaultBranch: "main"}); err == nil {
 		t.Error("duplicate token must fail")
@@ -263,7 +288,7 @@ func TestWorkspaceLifecycle(t *testing.T) {
 	if _, err := st.WorkspaceByToken(ctx, "ws-tok"); !errors.Is(err, store.ErrNotFound) {
 		t.Error("old token still resolves")
 	}
-	got, err := st.WorkspaceByPrefix(ctx, "acme")
+	got, err := st.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if err != nil || got.Token != "ws-tok-2" || got.DefaultBranch != "trunk" {
 		t.Errorf("after update: %+v (err %v)", got, err)
 	}
@@ -396,6 +421,44 @@ func TestUploadLifecycle(t *testing.T) {
 // workspace's repos (and their uploads, via ON DELETE CASCADE) by slug
 // prefix, while leaving repos of a different workspace that merely shares
 // a name-prefix substring untouched.
+// TestPublicRepoRefs drives the sitemap listing: only forge-public repos
+// with public reports on, ordered by forge then slug, capped by limit.
+func TestPublicRepoRefs(t *testing.T) {
+	st := newTestStore(t)
+	ctx := t.Context()
+	mk := func(forge, slug, visibility string, disabled bool) {
+		t.Helper()
+		r := &store.Repo{Forge: forge, Slug: slug, Token: forge + "-" + slug, DefaultBranch: "main", PublicReportsDisabled: disabled}
+		if err := st.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.SetRepoVisibility(ctx, r.ID, visibility, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("gitlab", "acme/widgets", store.VisibilityPublic, false)
+	mk("bitbucket", "zeta/tools", store.VisibilityPublic, false)
+	mk("bitbucket", "acme/widgets", store.VisibilityPublic, false)
+	mk("github", "acme/widgets", store.VisibilityPrivate, false)
+	mk("github", "acme/hidden", store.VisibilityPublic, true)
+
+	got, err := st.PublicRepoRefs(ctx, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.RepoRef{
+		{Forge: "bitbucket", Slug: "acme/widgets"},
+		{Forge: "bitbucket", Slug: "zeta/tools"},
+		{Forge: "gitlab", Slug: "acme/widgets"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("PublicRepoRefs = %v, want %v", got, want)
+	}
+	if got, _ := st.PublicRepoRefs(ctx, 2); !slices.Equal(got, want[:2]) {
+		t.Errorf("PublicRepoRefs(limit 2) = %v, want %v", got, want[:2])
+	}
+}
+
 func TestDeleteWorkspaceCascade(t *testing.T) {
 	st := newTestStore(t)
 	ctx := t.Context()
@@ -404,28 +467,31 @@ func TestDeleteWorkspaceCascade(t *testing.T) {
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	mkRepo := func(slug string) *store.Repo {
+	mkRepo := func(forge, slug string) *store.Repo {
 		t.Helper()
-		r := &store.Repo{Forge: "github", Slug: slug, Token: "t-" + slug, DefaultBranch: "main"}
+		r := &store.Repo{Forge: forge, Slug: slug, Token: "t-" + forge + "-" + slug, DefaultBranch: "main"}
 		if err := st.CreateRepo(ctx, r); err != nil {
 			t.Fatal(err)
 		}
 		u := &store.Upload{RepoID: r.ID, CommitSHA: "c1", Branch: "main", Format: "go",
-			TotalPct: 50, CoveredStmts: 1, TotalStmts: 2, RawBlobKey: "b/" + slug}
+			TotalPct: 50, CoveredStmts: 1, TotalStmts: 2, RawBlobKey: "b/" + forge + "/" + slug}
 		if err := st.CreateUpload(ctx, u, nil); err != nil {
 			t.Fatal(err)
 		}
 		return r
 	}
-	inside := mkRepo("acme/widgets")
+	inside := mkRepo("github", "acme/widgets")
 	// "acme-labs/x" shares the "acme" text but is NOT under the "acme/"
 	// prefix, so the LIKE-anchored delete must spare it.
-	outside := mkRepo("acme-labs/x")
+	outside := mkRepo("github", "acme-labs/x")
+	// The same prefix on another forge is another tenant's repo, uploads
+	// and all.
+	elsewhere := mkRepo("gitlab", "acme/widgets")
 
 	if err := st.DeleteWorkspace(ctx, ws.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.WorkspaceByPrefix(ctx, "acme"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := st.WorkspaceByPrefix(ctx, "bitbucket", "acme"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("workspace survived: %v", err)
 	}
 	if _, err := st.RepoByID(ctx, inside.ID); !errors.Is(err, store.ErrNotFound) {
@@ -433,6 +499,9 @@ func TestDeleteWorkspaceCascade(t *testing.T) {
 	}
 	if _, err := st.RepoByID(ctx, outside.ID); err != nil {
 		t.Errorf("out-of-prefix repo was wrongly deleted: %v", err)
+	}
+	if _, err := st.RepoByID(ctx, elsewhere.ID); err != nil {
+		t.Errorf("same-prefix repo on another forge was cascaded away: %v", err)
 	}
 }
 
@@ -912,7 +981,7 @@ func TestWithGrantLock(t *testing.T) {
 			cctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
 			errs[i] = st.WithGrantLock(cctx, ws.ID, func(ctx context.Context, tx store.GrantTx) error {
-				fresh, err := tx.WorkspaceByPrefix(ctx, "acme")
+				fresh, err := tx.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 				if err != nil {
 					return err
 				}
@@ -934,7 +1003,7 @@ func TestWithGrantLock(t *testing.T) {
 			t.Errorf("refresh %d: %v", i, err)
 		}
 	}
-	fresh, err := st.WorkspaceByPrefix(ctx, "acme")
+	fresh, err := st.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1166,7 +1235,7 @@ func TestRegisterWorkspace(t *testing.T) {
 	if wss, _ := st.ListWorkspacesForUser(ctx, other.ID); len(wss) != 0 {
 		t.Errorf("failed registration left memberships: %v", wss)
 	}
-	if got, err := st.WorkspaceByPrefix(ctx, "startup"); err != nil || got.Token != "reg-tok" {
+	if got, err := st.WorkspaceByPrefix(ctx, "bitbucket", "startup"); err != nil || got.Token != "reg-tok" {
 		t.Errorf("winner's workspace disturbed: %+v (err %v)", got, err)
 	}
 }
@@ -1205,7 +1274,7 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 		t.Errorf("stored column = %q, want sealed v1: value", raw)
 	}
 
-	got, err := st.WorkspaceByPrefix(ctx, "acme")
+	got, err := st.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1217,7 +1286,7 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 	if err := st.SetWorkspaceBitbucketGrant(ctx, w.ID, "covbot", "rt-secret-2", false); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = st.WorkspaceByPrefix(ctx, "acme"); got.BitbucketRefreshToken != "rt-secret-2" {
+	if got, _ = st.WorkspaceByPrefix(ctx, "bitbucket", "acme"); got.BitbucketRefreshToken != "rt-secret-2" {
 		t.Errorf("after rotation: %q, want rt-secret-2", got.BitbucketRefreshToken)
 	}
 
@@ -1229,7 +1298,7 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 	if err := st.UpdateWorkspace(ctx, &stale); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = st.WorkspaceByPrefix(ctx, "acme")
+	got, _ = st.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if got.DefaultBranch != "trunk" || got.BitbucketRefreshToken != "rt-secret-2" {
 		t.Errorf("after full-row update: branch %q token %q, want trunk + untouched rt-secret-2",
 			got.DefaultBranch, got.BitbucketRefreshToken)
@@ -1240,7 +1309,7 @@ func TestBitbucketGrantEncryptedAtRest(t *testing.T) {
 	otherBox, _ := secretbox.New(otherSecretKey)
 	st2 := postgres.New(st.Pool())
 	st2.SetCipher(otherBox)
-	got, err = st2.WorkspaceByPrefix(ctx, "acme")
+	got, err = st2.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if err != nil {
 		t.Fatalf("wrong key must degrade, not error: %v", err)
 	}
@@ -1286,7 +1355,7 @@ func TestGitLabGrantEncryptedAtRest(t *testing.T) {
 		t.Errorf("stored column = %q, want sealed v1: value", raw)
 	}
 
-	got, err := st.WorkspaceByPrefix(ctx, "grp/sub")
+	got, err := st.WorkspaceByPrefix(ctx, "gitlab", "grp/sub")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1304,7 +1373,7 @@ func TestGitLabGrantEncryptedAtRest(t *testing.T) {
 	if err := st.UpdateWorkspace(ctx, &stale); err != nil {
 		t.Fatal(err)
 	}
-	got, _ = st.WorkspaceByPrefix(ctx, "grp/sub")
+	got, _ = st.WorkspaceByPrefix(ctx, "gitlab", "grp/sub")
 	if got.DefaultBranch != "trunk" || got.GitLabRefreshToken != "rt-secret-2" {
 		t.Errorf("after rotation + full-row update: branch %q token %q, want trunk + rt-secret-2",
 			got.DefaultBranch, got.GitLabRefreshToken)

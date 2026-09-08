@@ -28,8 +28,8 @@ func badgeColor(pct float64) string {
 	}
 }
 
-// handleBadge implements GET /badge/{workspace}/{repo}.svg with the latest
-// coverage on the repo's default branch.
+// handleBadge implements GET /badge/{forge}/{workspace}/{repo}.svg with
+// the latest coverage on the repo's default branch.
 func (s *Server) handleBadge(w http.ResponseWriter, r *http.Request) {
 	slug, ok := strings.CutSuffix(r.PathValue("slug"), ".svg")
 	if !ok || slug == "" {
@@ -37,7 +37,7 @@ func (s *Server) handleBadge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo, err := s.store.RepoBySlug(r.Context(), slug)
+	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), slug)
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return

@@ -29,7 +29,7 @@ func TestAuthDisabledKeepsUIOpen(t *testing.T) {
 func TestAuthEnforcedRedirectsToLogin(t *testing.T) {
 	f := newAuthFixture(t, &fakeProvider{identity: memberIdentity()}, nil)
 
-	rec := get(f, "/repos/acme/widgets?branch=main")
+	rec := get(f, "/repos/bitbucket/acme/widgets?branch=main")
 	if rec.Code != http.StatusFound {
 		t.Fatalf("status = %d, want 302", rec.Code)
 	}
@@ -37,7 +37,7 @@ func TestAuthEnforcedRedirectsToLogin(t *testing.T) {
 	if err != nil || loc.Path != "/login" {
 		t.Fatalf("location = %q, want /login", rec.Header().Get("Location"))
 	}
-	if next := loc.Query().Get("next"); next != "/repos/acme/widgets?branch=main" {
+	if next := loc.Query().Get("next"); next != "/repos/bitbucket/acme/widgets?branch=main" {
 		t.Errorf("next = %q, want original path+query", next)
 	}
 	// The banner belongs to the open state only.
@@ -59,10 +59,10 @@ func TestAuthEnforcedPublicEndpointsStayPublic(t *testing.T) {
 	}
 
 	for path, want := range map[string]int{
-		"/healthz":                http.StatusOK,
-		"/badge/acme/widgets.svg": http.StatusOK,
-		"/static/style.css":       http.StatusOK,
-		"/login":                  http.StatusOK,
+		"/healthz":                          http.StatusOK,
+		"/badge/bitbucket/acme/widgets.svg": http.StatusOK,
+		"/static/style.css":                 http.StatusOK,
+		"/login":                            http.StatusOK,
 	} {
 		if rec := get(f, path); rec.Code != want {
 			t.Errorf("GET %s: status = %d, want %d", path, rec.Code, want)

@@ -163,6 +163,12 @@ func New(cfg Config) *Server {
 		// pathesc encodes a value into a single URL path segment; GitLab
 		// workspace prefixes contain slashes and must ride as %2F.
 		"pathesc": url.PathEscape,
+		// The tenant URL builders (urls.go): a repo's page, badge and
+		// settings, and a workspace's pages, forge segment included.
+		"repourl":     repoURL,
+		"badgeurl":    badgeURL,
+		"settingsurl": repoSettingsURL,
+		"wsurl":       workspaceURL,
 		// forgeicon renders a forge's brand mark for the sign-in button.
 		"forgeicon": providerIcon,
 		// dict builds a map from alternating key/value args so a shared
@@ -264,7 +270,7 @@ func New(cfg Config) *Server {
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/upload", s.handleUpload)
-	s.mux.HandleFunc("GET /badge/{slug...}", s.handleBadge)
+	s.mux.HandleFunc("GET /badge/{forge}/{slug...}", s.handleBadge)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /robots.txt", s.handleRobots)
 	s.mux.HandleFunc("GET /sitemap.xml", s.handleSitemap)
@@ -276,17 +282,18 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /onboarding", s.handleOnboarding)
 	s.mux.HandleFunc("GET /register", s.handleRegisterPage)
 	s.mux.HandleFunc("POST /register", s.handleRegister)
-	s.mux.HandleFunc("GET /workspaces/{prefix}", s.handleWorkspacePage)
-	s.mux.HandleFunc("POST /workspaces/{prefix}/rotate-token", s.handleWorkspaceRotate)
-	s.mux.HandleFunc("POST /workspaces/{prefix}/settings", s.handleWorkspaceSettings)
-	s.mux.HandleFunc("POST /workspaces/{prefix}/delete", s.handleWorkspaceDelete)
-	s.mux.HandleFunc("POST /workspaces/{prefix}/github/disconnect", s.handleGitHubDisconnect)
-	for _, g := range connectGrants {
-		s.mux.HandleFunc("GET /workspaces/{prefix}/"+g.forge+"/connect", s.handleConnect(g))
-		s.mux.HandleFunc("POST /workspaces/{prefix}/"+g.forge+"/disconnect", s.handleDisconnect(g))
-	}
-	s.mux.HandleFunc("GET /workspaces/{prefix}/setup", s.handleWorkspaceSetup)
-	s.mux.HandleFunc("GET /workspaces/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
+	// Tenant pages carry the forge before the name: repo slugs and
+	// workspace prefixes are unique per forge, not globally (urls.go).
+	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}", s.handleWorkspacePage)
+	s.mux.HandleFunc("POST /workspaces/{forge}/{prefix}/rotate-token", s.handleWorkspaceRotate)
+	s.mux.HandleFunc("POST /workspaces/{forge}/{prefix}/settings", s.handleWorkspaceSettings)
+	s.mux.HandleFunc("POST /workspaces/{forge}/{prefix}/delete", s.handleWorkspaceDelete)
+	// The workspace's forge decides what connect and disconnect mean: the
+	// GitHub App link, or the Bitbucket/GitLab consent grant.
+	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}/connect", s.handleConnect)
+	s.mux.HandleFunc("POST /workspaces/{forge}/{prefix}/disconnect", s.handleDisconnect)
+	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}/setup", s.handleWorkspaceSetup)
+	s.mux.HandleFunc("GET /workspaces/{forge}/{prefix}/setup/status", s.handleWorkspaceSetupStatus)
 	s.mux.HandleFunc("GET /github/setup", s.handleGitHubSetup)
 	if s.webhookSecret != "" {
 		s.mux.HandleFunc("POST /github/webhook", s.handleGitHubWebhook)
@@ -300,11 +307,11 @@ func (s *Server) routes() {
 	// trailing {slug...} wildcard — a single {slug} segment cannot match it on
 	// a live server (only httptest preserves the %2F). The mutating actions
 	// therefore carry their verb before the slug rather than after it.
-	s.mux.HandleFunc("GET /repo-settings/{slug...}", s.handleRepoSettings)
-	s.mux.HandleFunc("POST /repo-settings/save/{slug...}", s.handleRepoSettingsSave)
-	s.mux.HandleFunc("POST /repo-settings/rotate-token/{slug...}", s.handleRepoRotateToken)
-	s.mux.HandleFunc("POST /repo-settings/delete/{slug...}", s.handleRepoDelete)
-	s.mux.HandleFunc("GET /repos/{slug...}", s.handleRepo)
+	s.mux.HandleFunc("GET /repo-settings/{forge}/{slug...}", s.handleRepoSettings)
+	s.mux.HandleFunc("POST /repo-settings/save/{forge}/{slug...}", s.handleRepoSettingsSave)
+	s.mux.HandleFunc("POST /repo-settings/rotate-token/{forge}/{slug...}", s.handleRepoRotateToken)
+	s.mux.HandleFunc("POST /repo-settings/delete/{forge}/{slug...}", s.handleRepoDelete)
+	s.mux.HandleFunc("GET /repos/{forge}/{slug...}", s.handleRepo)
 	s.mux.HandleFunc("GET /uploads/{id}", s.handleUploadPage)
 	s.mux.HandleFunc("GET /uploads/{id}/profile", s.handleUploadProfile)
 	s.mux.HandleFunc("GET /uploads/{id}/files/{path...}", s.handleSource)

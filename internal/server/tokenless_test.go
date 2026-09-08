@@ -173,7 +173,7 @@ func TestTokenlessUploadRevokedInstallation(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "reconnect") {
 		t.Errorf("reconnect hint missing: %s", rec.Body)
 	}
-	ws, err := f.store.WorkspaceByPrefix(t.Context(), "acme")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "github", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,7 @@ func TestBadgeIgnoresPRReportsOnDefaultBranch(t *testing.T) {
 	if rec := doUpload(t, f, "", fields, testProfile); rec.Code != http.StatusCreated {
 		t.Fatalf("upload: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	rec := get(f, "/badge/acme/widgets.svg")
+	rec := get(f, "/badge/github/acme/widgets.svg")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("badge: status = %d", rec.Code)
 	}
@@ -299,7 +299,7 @@ func TestBadgeIgnoresPRReportsOnDefaultBranch(t *testing.T) {
 	if rec := doUpload(t, f, "secret-token", map[string]string{"repo": "acme/widgets", "commit": "def456", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
 		t.Fatalf("branch upload: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	rec = get(f, "/badge/acme/widgets.svg")
+	rec = get(f, "/badge/github/acme/widgets.svg")
 	if !strings.Contains(rec.Body.String(), "80.0%") {
 		t.Errorf("badge = %s, want 80.0%%", rec.Body)
 	}

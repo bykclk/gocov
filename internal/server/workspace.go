@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -12,13 +11,6 @@ import (
 	"github.com/gocov/gocov/internal/hosted"
 	"github.com/gocov/gocov/internal/store"
 )
-
-// workspaceURL builds an in-site link to a workspace page. The prefix is
-// escaped into a single path segment because GitLab namespace paths nest
-// ("grp/sub" → "grp%2Fsub"); the router decodes it back via PathValue.
-func workspaceURL(prefix, suffix string) string {
-	return "/workspaces/" + url.PathEscape(prefix) + suffix
-}
 
 // Workspace settings page (M3/R3) — the way workspaces are administered:
 // token rotation, default branch, one-click forge connection and gate
@@ -31,16 +23,16 @@ func workspaceURL(prefix, suffix string) string {
 // anyway gets a 403, since the workspace's existence is no secret to
 // them.
 
-// memberWorkspace resolves the {prefix} path segment to a workspace the
-// signed-in user is a member of, writing a 404 otherwise, and returns
-// the user's role in it. With auth off there are no members, so the
-// pages do not exist.
+// memberWorkspace resolves the {forge}/{prefix} path segments to a
+// workspace the signed-in user is a member of, writing a 404 otherwise,
+// and returns the user's role in it. With auth off there are no members,
+// so the pages do not exist.
 func (s *Server) memberWorkspace(w http.ResponseWriter, r *http.Request) (*store.Workspace, store.Role) {
 	u := s.signedIn(w, r)
 	if u == nil {
 		return nil, ""
 	}
-	ws, err := s.store.WorkspaceByPrefix(r.Context(), r.PathValue("prefix"))
+	ws, err := s.store.WorkspaceByPrefix(r.Context(), r.PathValue("forge"), r.PathValue("prefix"))
 	if errors.Is(err, store.ErrNotFound) {
 		http.NotFound(w, r)
 		return nil, ""
@@ -232,7 +224,7 @@ func (s *Server) addGitHubAppData(r *http.Request, ws *store.Workspace, data map
 	data["GitHubInstallURL"] = s.forges.InstallURL(r.Context())
 }
 
-// handleWorkspacePage implements GET /workspaces/{prefix}.
+// handleWorkspacePage implements GET /workspaces/{forge}/{prefix}.
 func (s *Server) handleWorkspacePage(w http.ResponseWriter, r *http.Request) {
 	ws, role := s.memberWorkspace(w, r)
 	if ws == nil {
@@ -257,7 +249,7 @@ func (s *Server) handleWorkspacePage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "workspace.html", s.settingsData(r, ws, role == store.RoleOwner, "", notice, ""))
 }
 
-// handleWorkspaceRotate implements POST /workspaces/{prefix}/rotate-token.
+// handleWorkspaceRotate implements POST /workspaces/{forge}/{prefix}/rotate-token.
 // The response renders the new token once; the old one is already dead by
 // then (single UPDATE, no grace period).
 func (s *Server) handleWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +272,7 @@ func (s *Server) handleWorkspaceRotate(w http.ResponseWriter, r *http.Request) {
 		"Token rotated — the previous token no longer works. Update your CI variable.", ""))
 }
 
-// handleWorkspaceSettings implements POST /workspaces/{prefix}/settings:
+// handleWorkspaceSettings implements POST /workspaces/{forge}/{prefix}/settings:
 // default branch and gate defaults for repos registered from now on.
 func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request) {
 	ws := s.ownerWorkspace(w, r)
@@ -313,7 +305,7 @@ func (s *Server) handleWorkspaceSettings(w http.ResponseWriter, r *http.Request)
 		s.internalError(w, "updating workspace", err)
 		return
 	}
-	http.Redirect(w, r, workspaceURL(ws.Prefix, "?saved=1"), http.StatusSeeOther)
+	http.Redirect(w, r, workspaceURL(ws, "?saved=1"), http.StatusSeeOther)
 }
 
 // parseGateForm reads the three coverage-gate percentages from a settings
@@ -353,7 +345,7 @@ func validRetention(days int) bool {
 	return false
 }
 
-// handleWorkspaceDelete implements POST /workspaces/{prefix}/delete: it
+// handleWorkspaceDelete implements POST /workspaces/{forge}/{prefix}/delete: it
 // removes the workspace and cascades its repos and coverage reports (the
 // store does the cascade). Owners only; uploads with the token start
 // failing at once and nothing is changed on the forge.
@@ -377,7 +369,7 @@ func (s *Server) settingsError(w http.ResponseWriter, r *http.Request, ws *store
 	s.render(w, r, "workspace.html", s.settingsData(r, ws, true, "", "", msg))
 }
 
-// handleWorkspaceSetup implements GET /workspaces/{prefix}/setup (M3/R4):
+// handleWorkspaceSetup implements GET /workspaces/{forge}/{prefix}/setup (M3/R4):
 // the onboarding page with the forge-appropriate CI snippet, the upload
 // token pre-filled (D6, owners only — a member gets the snippet without
 // it) and the waiting-for-first-upload state.
@@ -405,11 +397,11 @@ func (s *Server) handleWorkspaceSetup(w http.ResponseWriter, r *http.Request) {
 	data["Active"] = active
 	data["Forge"] = ws.Forge
 	data["Landed"] = active == 2 && len(repos) > 0 && r.FormValue("landed") == "1"
-	data["Rail"] = onboardingRail(active, ws.Forge, ws.Prefix, len(repos) > 0)
+	data["Rail"] = onboardingRail(active, ws.Forge, ws, len(repos) > 0)
 	s.render(w, r, "onboarding.html", data)
 }
 
-// handleWorkspaceSetupStatus implements GET /workspaces/{prefix}/setup/status,
+// handleWorkspaceSetupStatus implements GET /workspaces/{forge}/{prefix}/setup/status,
 // the htmx poll target that flips the waiting state once the first
 // upload has auto-registered a repo.
 func (s *Server) handleWorkspaceSetupStatus(w http.ResponseWriter, r *http.Request) {
@@ -429,7 +421,7 @@ func (s *Server) handleWorkspaceSetupStatus(w http.ResponseWriter, r *http.Reque
 	// the page can report it once (a later reload of the same state must
 	// not count again).
 	if repos, _ := data["Repos"].([]*store.Repo); len(repos) > 0 {
-		w.Header().Set("HX-Redirect", workspaceURL(ws.Prefix, "/setup")+"?landed=1")
+		w.Header().Set("HX-Redirect", workspaceURL(ws, "/setup")+"?landed=1")
 		return
 	}
 	s.renderPartial(w, "onboarding.html", "setup-status", data)
@@ -443,7 +435,7 @@ func (s *Server) workspaceRepos(r *http.Request, ws *store.Workspace) ([]*store.
 	}
 	var out []*store.Repo
 	for _, repo := range repos {
-		if strings.HasPrefix(repo.Slug, ws.Prefix+"/") {
+		if ws.Owns(repo) {
 			out = append(out, repo)
 		}
 	}

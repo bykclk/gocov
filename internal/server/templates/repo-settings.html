@@ -1,16 +1,15 @@
 {{define "title"}}gocov — {{.Repo.Slug}} settings{{end}}
 {{define "content"}}
-{{$slug := .Repo.Slug}}
 {{$ro := not .Owner}}
 <div class="ws">
 
 <div class="ws-head">
   <div class="crumbs"><a href="/">Repos</a> /
-    <a href="/workspaces/{{.WSPrefixEsc}}">{{.WSPrefix}}</a> /
-    <a href="/repos/{{.Repo.Slug}}"><code>{{.Repo.Slug}}</code></a> / Settings</div>
+    <a href="{{wsurl .Workspace ""}}">{{.Workspace.Prefix}}</a> /
+    <a href="{{repourl .Repo}}"><code>{{.Repo.Slug}}</code></a> / Settings</div>
   <h1>Settings <span class="mono">{{.Repo.Slug}}</span></h1>
-  <p class="sub">In workspace <a href="/workspaces/{{.WSPrefixEsc}}">{{.WSPrefix}}</a>
-    &middot; <a href="/repos/{{.Repo.Slug}}">Back to coverage</a></p>
+  <p class="sub">In workspace <a href="{{wsurl .Workspace ""}}">{{.Workspace.Prefix}}</a>
+    &middot; <a href="{{repourl .Repo}}">Back to coverage</a></p>
 </div>
 
 <nav class="side">
@@ -29,7 +28,7 @@
 
 {{with .Notice}}<p class="notice">{{.}}</p>{{end}}
 {{with .Error}}<p class="notice fail">{{.}}</p>{{end}}
-{{if $ro}}<p class="notice">You are a member of <span class="mono">{{.WSPrefix}}</span>, so these settings are read-only.
+{{if $ro}}<p class="notice">You are a member of <span class="mono">{{.Workspace.Prefix}}</span>, so these settings are read-only.
   Changing them — and seeing the upload token — takes a workspace owner: an admin or owner of the workspace on the
   forge. Roles refresh at every sign-in.</p>{{end}}
 
@@ -45,7 +44,7 @@
 </div></div>
 {{end}}
 
-{{if not $ro}}<form method="post" action="/repo-settings/save/{{$slug}}">{{end}}
+{{if not $ro}}<form method="post" action="{{settingsurl .Repo "save"}}">{{end}}
 <div class="card" id="general">
   <div class="card-hd"><h2>General</h2></div>
   <div class="card-bd">
@@ -145,7 +144,7 @@
     {{if $ro}}
     <span class="hint">Only a workspace owner can see or rotate the token.</span>
     {{else}}
-    <form method="post" action="/repo-settings/rotate-token/{{$slug}}"
+    <form method="post" action="{{settingsurl .Repo "rotate-token"}}"
           data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
       <button class="btn" type="submit">Rotate token</button></form>
     <span class="hint">The old token stops working the moment you rotate.</span>
@@ -159,7 +158,7 @@
     <p>The badge shows total coverage on the base branch. Anyone with the link can load it,
     without seeing the reports behind it.</p>
     <div class="badgebox">
-      <img alt="coverage badge" src="/badge/{{.Repo.Slug}}.svg">
+      <img alt="coverage badge" src="{{badgeurl .Repo}}">
       <input id="rs-badge" class="input mono" readonly onfocus="this.select()"
              style="flex:1;min-width:0;font-size:12px" value="{{.BadgeMarkdown}}">
       <button class="btn sm" type="button" data-copy="#rs-badge">Copy Markdown</button>
@@ -179,7 +178,7 @@
     {{if $ro}}
     <span class="hint">Only a workspace owner can remove it.</span>
     {{else}}
-    <form method="post" action="/repo-settings/delete/{{$slug}}"
+    <form method="post" action="{{settingsurl .Repo "delete"}}"
           data-confirm="Remove {{.Repo.Slug}} and all of its coverage data? This cannot be undone.">
       <button class="btn danger" type="submit">Remove this repository</button></form>
     <span class="hint">This cannot be undone.</span>
