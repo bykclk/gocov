@@ -1,13 +1,15 @@
 {{define "title"}}gocov — set up coverage{{end}}
 {{define "content"}}
 {{/* The wizard root names the step and face it shows for the analytics
-     snippet (data-ph-view fires onboarding_step_viewed with that context
+     snippet, plus on the CI step whether it led with an identity token
+     (auth=oidc) or the upload token (auth=token); data-ph-view fires
+     onboarding_step_viewed with that context
      once per load); the buttons below declare their own click events. */}}
 {{$step := "workspace"}}{{$face := ""}}
 {{if eq .Active 0}}{{$face = .WSState}}
 {{else if eq .Active 1}}{{$step = "wire_ci"}}{{$face = "ci"}}
 {{else}}{{$step = "first_upload"}}{{$face = "awaiting"}}{{if .Repos}}{{$face = "received"}}{{end}}{{end}}
-<div class="wiz" data-ph-view="onboarding_step_viewed" data-ph-step="{{$step}}" data-ph-face="{{$face}}" data-ph-forge="{{.Forge}}">
+<div class="wiz" data-ph-view="onboarding_step_viewed" data-ph-step="{{$step}}" data-ph-face="{{$face}}" data-ph-forge="{{.Forge}}"{{if eq .Active 1}} data-ph-auth="{{if .Tokenless}}oidc{{else}}token{{end}}"{{end}}>
   <div class="head">
     <h1>Set up coverage</h1>
     <p class="sub">Three steps, about two minutes. You can leave and come back &mdash; progress is saved.</p>
@@ -174,26 +176,30 @@
 </div>
 {{end}}
 
-{{/* Wire up CI — token + forge-appropriate snippet. Reporting is a separate,
-   optional capability set up in the Workspace step, so it isn't here. */}}
+{{/* Wire up CI — the forge-appropriate snippet, leading with an OIDC
+   identity token when the workspace is connected (Tokenless) and with
+   GOCOV_TOKEN otherwise; the token itself stays reachable either way.
+   Reporting is a separate, optional capability set up in the Workspace
+   step, so it isn't here. */}}
 {{define "wiz-ci"}}
 <section class="panel">
   <div class="card pad">
     <h2>Wire up CI</h2>
-    {{if eq .Workspace.Forge "github"}}
-    <p class="sub">In your GitHub org or repo: <em>Settings &rarr; Secrets and variables &rarr;
-    Actions</em>. Add <code>GOCOV_TOKEN</code> as a secret{{if not .ServerImplicit}}
-    and <code>GOCOV_SERVER</code> as a variable{{end}}.</p>
-    {{else if eq .Workspace.Forge "gitlab"}}
-    <p class="sub">In your GitLab group or project: <em>Settings &rarr; CI/CD &rarr;
-    Variables</em>. Add <code>GOCOV_TOKEN</code>, marked <strong>masked</strong> but
-    <strong>not protected</strong> &mdash; GitLab checks &ldquo;Protect variable&rdquo; by
-    default, and protected variables never reach merge request
-    pipelines{{if not .ServerImplicit}}. Add <code>GOCOV_SERVER</code> too{{end}}.</p>
+    {{if .Tokenless}}
+    <p class="sub">Nothing to paste. Each job proves which repository it is with a short-lived identity
+    token from {{.ForgeLabel}}, and gocov verifies it through the connection you just made &mdash;
+    no secret to create, share or rotate.{{if not .ServerImplicit}} The one CI variable is
+    <code>GOCOV_SERVER</code>, a plain value.{{end}}</p>
     {{else}}
-    <p class="sub">In Bitbucket: <em>Workspace settings &rarr; Workspace variables</em>.
-    Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
-    <code>GOCOV_SERVER</code>{{end}}.</p>
+    {{template "wiz-token-where" .}}
+    {{if .ConnectionBroken}}
+    <p class="sub hint">The workspace&rsquo;s connection to {{.ForgeLabel}} no longer works, so jobs cannot
+    upload with an identity token until it is reconnected in the previous step; once it is, the token goes
+    away.</p>
+    {{else}}
+    <p class="sub hint">Connect the workspace in the previous step and the token goes away: a connected
+    workspace&rsquo;s jobs authenticate with an identity token from {{.ForgeLabel}} instead.</p>
+    {{end}}
     {{end}}
 
     {{if not .ServerImplicit}}
@@ -206,40 +212,36 @@
       </div>
     </div>
     {{end}}
-    {{if .Owner}}
-    <div class="secret">
-      <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
-        <span class="spacer"></span><span class="muted small">Shown once &mdash; rotate it any time from Settings</span></div>
-      {{/* ph-no-capture keeps the token (masked text, data-full, the hidden
-           copy input) out of the session replay that runs on this page. */}}
-      <div class="secret-bd ph-no-capture">
-        <span class="v" id="tok" data-full="{{.Token}}">{{.TokenMasked}}</span>
-        <button class="btn" type="button" data-reveal="#tok" data-ph-click="reveal_token_clicked">Reveal</button>
-        <button class="btn primary" type="button" data-copy="#tok-full" data-ph-click="copy_token_clicked">Copy</button>
-        <input type="hidden" id="tok-full" value="{{.Token}}">
-      </div>
-    </div>
-    {{else}}
-    <div class="secret">
-      <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
-        <span class="spacer"></span><span class="muted small">Shown to workspace owners only &mdash; ask one for it, or upload tokenless where your CI allows</span></div>
-    </div>
-    {{end}}
+    {{if not .Tokenless}}{{template "wiz-token-card" .}}{{end}}
 
     {{if eq .Workspace.Forge "github"}}
-    <p class="sub">Then add the gocov action to your GitHub Actions workflow, after your tests
-    run &mdash; it installs the pinned CLI (with checksum verification) and uploads:</p>
-    <pre><code id="snippet">- run: go test ./... -covermode=atomic -coverprofile=coverage.out
+    <p class="sub">{{if .Tokenless}}Add the gocov action to your GitHub Actions workflow, after your tests
+    run, and grant the job <code>id-token: write</code> &mdash; that is what lets it mint its identity
+    token. The action installs the pinned CLI (with checksum verification) and uploads:{{else}}Then add the
+    gocov action to your GitHub Actions workflow, after your tests run &mdash; it installs the pinned CLI
+    (with checksum verification) and uploads:{{end}}</p>
+    <pre><code id="snippet">{{if .Tokenless}}permissions:
+  contents: read
+  id-token: write   # the job's identity token; no secret needed
+steps:
+  - run: go test ./... -covermode=atomic -coverprofile=coverage.out
+  - uses: gocov/gocov-action@v1
+    with:
+      files: coverage.out{{if not .ServerImplicit}}
+      server: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}{{else}}- run: go test ./... -covermode=atomic -coverprofile=coverage.out
 - uses: gocov/gocov-action@v1
   with:
     files: coverage.out
     token: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}{{if not .ServerImplicit}}
-    server: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}</code></pre>
+    server: ${{"{{"}} vars.GOCOV_SERVER {{"}}"}}{{end}}{{end}}</code></pre>
     {{else if and (eq .Workspace.Forge "gitlab") .GitLabCatalog}}
-    <p class="sub">Then include the gocov component in your <code>.gitlab-ci.yml</code> &mdash; it
-    installs the pinned CLI (with checksum verification) and uploads the coverage file your test
-    job leaves as an artifact; the <code>workflow</code> rules run the pipeline on merge requests
-    and the default branch without duplicates:</p>
+    <p class="sub">{{if .Tokenless}}Include the gocov component in your <code>.gitlab-ci.yml</code> &mdash; its
+    job declares the identity token itself, installs the pinned CLI (with checksum verification) and uploads
+    the coverage file your test job leaves as an artifact; the <code>workflow</code> rules run the pipeline on
+    merge requests and the default branch without duplicates:{{else}}Then include the gocov component in your
+    <code>.gitlab-ci.yml</code> &mdash; it installs the pinned CLI (with checksum verification) and uploads the
+    coverage file your test job leaves as an artifact; the <code>workflow</code> rules run the pipeline on
+    merge requests and the default branch without duplicates:{{end}}</p>
     <pre><code id="snippet">include:
   - component: gitlab.com/gocov/gocov/upload@1
     inputs:
@@ -259,9 +261,12 @@ test:
   artifacts:
     paths: [coverage.out]</code></pre>
     {{else if eq .Workspace.Forge "gitlab"}}
-    <p class="sub">Then add the coverage job to your <code>.gitlab-ci.yml</code> &mdash; the
+    <p class="sub">{{if .Tokenless}}Add the coverage job to your <code>.gitlab-ci.yml</code> &mdash; the
+    <code>id_tokens</code> entry is the job&rsquo;s identity token, the <code>workflow</code> rules run it on
+    merge requests and the default branch without duplicate pipelines, and the checksum line pins the
+    binary:{{else}}Then add the coverage job to your <code>.gitlab-ci.yml</code> &mdash; the
     <code>workflow</code> rules run it on merge requests and the default branch without
-    duplicate pipelines, and the checksum line pins the binary:</p>
+    duplicate pipelines, and the checksum line pins the binary:{{end}}</p>
     {{/* x-release-please-start-version */}}
     <pre><code id="snippet">workflow:
   rules:
@@ -269,7 +274,10 @@ test:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 coverage:
-  image: golang:1.23
+  image: golang:1.23{{if .Tokenless}}
+  id_tokens:
+    GOCOV_ID_TOKEN:
+      aud: {{.BaseURL}}{{end}}
   script:
     - go test ./... -covermode=atomic -coverprofile=coverage.out
     - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.24.0/gocov-linux-amd64
@@ -279,21 +287,27 @@ coverage:
     - ./gocov-linux-amd64 upload coverage.out</code></pre>
     {{/* x-release-please-end */}}
     {{else}}
-    <p class="sub">Then add the step to <code>bitbucket-pipelines.yml</code> &mdash;
+    <p class="sub">{{if .Tokenless}}Add the step to <code>bitbucket-pipelines.yml</code> &mdash; naming your
+    gocov server under <code>oidc.audiences</code> is what hands the step its identity token;
+    <code>branches</code> and <code>pull-requests</code> share one step so a PR build runs once, not
+    twice:{{else}}Then add the step to <code>bitbucket-pipelines.yml</code> &mdash;
     <code>branches</code> and <code>pull-requests</code> share one step so a PR build runs
-    once, not twice:</p>
+    once, not twice:{{end}}</p>
     <pre><code id="snippet">image: golang:1.23
 
 definitions:
   steps:
     - step: &amp;coverage
-        name: Test + upload coverage
+        name: Test + upload coverage{{if .Tokenless}}
+        oidc:
+          audiences:
+            - {{.BaseURL}}   # the step's identity token; no secret needed{{end}}
         script:
           - go test ./... -covermode=atomic -coverprofile=coverage.out
           - pipe: docker://gocov/upload-pipe:0
             variables:
-              FILES: coverage.out
-              TOKEN: $GOCOV_TOKEN{{if not .ServerImplicit}}
+              FILES: coverage.out{{if not .Tokenless}}
+              TOKEN: $GOCOV_TOKEN{{end}}{{if not .ServerImplicit}}
               SERVER: $GOCOV_SERVER{{end}}
 
 pipelines:
@@ -309,6 +323,17 @@ pipelines:
       <span class="muted small">Commit, branch, repo and PR are auto-detected; other languages
       can upload lcov, JaCoCo or Cobertura with <code>-format</code>.</span>
     </div>
+    {{if .Tokenless}}
+    <details class="alt">
+      <summary data-ph-click="show_token_clicked">Prefer a secret, or a CI that cannot mint identity tokens?</summary>
+      <div class="alt-bd">
+        {{template "wiz-token-where" .}}
+        <p class="sub hint">A pasted token always takes precedence over the identity token, and it is the way in
+        for CI systems without OIDC.</p>
+        {{template "wiz-token-card" .}}
+      </div>
+    </details>
+    {{end}}
     <div class="foot">
       <span class="hint">Reporting and CI are independent &mdash; coverage uploads even if
       reporting is off.</span>
@@ -317,6 +342,50 @@ pipelines:
     </div>
   </div>
 </section>
+{{end}}
+
+{{/* Where GOCOV_TOKEN goes on each forge, with GOCOV_SERVER beside it when
+   this is not the hosted instance. */}}
+{{define "wiz-token-where"}}
+{{if eq .Workspace.Forge "github"}}
+<p class="sub">In your GitHub org or repo: <em>Settings &rarr; Secrets and variables &rarr;
+Actions</em>. Add <code>GOCOV_TOKEN</code> as a secret{{if not .ServerImplicit}}
+and <code>GOCOV_SERVER</code> as a variable{{end}}, and pass it to the action as
+<code>token: ${{"{{"}} secrets.GOCOV_TOKEN {{"}}"}}</code>.</p>
+{{else if eq .Workspace.Forge "gitlab"}}
+<p class="sub">In your GitLab group or project: <em>Settings &rarr; CI/CD &rarr;
+Variables</em>. Add <code>GOCOV_TOKEN</code>, marked <strong>masked</strong> but
+<strong>not protected</strong> &mdash; GitLab checks &ldquo;Protect variable&rdquo; by
+default, and protected variables never reach merge request
+pipelines{{if not .ServerImplicit}}. Add <code>GOCOV_SERVER</code> too{{end}}.</p>
+{{else}}
+<p class="sub">In Bitbucket: <em>Workspace settings &rarr; Workspace variables</em>.
+Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
+<code>GOCOV_SERVER</code>{{end}}, and pass it to the pipe as <code>TOKEN: $GOCOV_TOKEN</code>.</p>
+{{end}}
+{{end}}
+
+{{/* The upload token card: reveal/copy for owners, a pointer for members. */}}
+{{define "wiz-token-card"}}
+{{if .Owner}}
+<div class="secret">
+  <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
+    <span class="spacer"></span><span class="muted small">Shown once &mdash; rotate it any time from Settings</span></div>
+  {{/* ph-no-capture keeps the token (masked text, data-full, the hidden
+       copy input) out of the session replay that runs on this page. */}}
+  <div class="secret-bd ph-no-capture">
+    <span class="v" id="tok" data-full="{{.Token}}">{{.TokenMasked}}</span>
+    <button class="btn" type="button" data-reveal="#tok" data-ph-click="reveal_token_clicked">Reveal</button>
+    <button class="btn primary" type="button" data-copy="#tok-full" data-ph-click="copy_token_clicked">Copy</button>
+    <input type="hidden" id="tok-full" value="{{.Token}}">
+  </div>
+</div>
+{{else}}
+<div class="secret">
+  <div class="secret-hd"><span class="name">GOCOV_TOKEN</span><span class="chip plain">Secret</span>
+    <span class="spacer"></span><span class="muted small">Shown to workspace owners only &mdash; ask one for it, or upload tokenless where your CI allows</span></div>
+</div>
+{{end}}
 {{end}}
 
 {{/* First upload — the htmx poll flips to the done card once a repo

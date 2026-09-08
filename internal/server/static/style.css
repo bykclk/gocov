@@ -236,6 +236,11 @@ select.input option {
 .source-toolbar { flex-wrap: wrap; }
 .source-toolbar .count { color: var(--text-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
 .source-toolbar .hint { color: var(--text-3); font-size: 12.5px; }
+/* the token, folded away under the tokenless snippet */
+details.alt { border: 1px solid var(--border); border-radius: var(--radius-sm); margin: 12px 0 4px; }
+details.alt summary { cursor: pointer; padding: 10px 14px; font-size: 13px; color: var(--text-2); }
+details.alt[open] summary { border-bottom: 1px solid var(--border-soft); }
+details.alt .alt-bd { padding: 12px 14px 0; }
 .btn.sm { padding: 4px 10px; font-size: 12.5px; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: var(--surface); }
 .seg button { background: none; border: none; border-left: 1px solid var(--border); padding: 5px 11px;
@@ -354,6 +359,11 @@ body[data-only="miss"] .fold { display: none; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .secret-bd .v[data-shown] { overflow-wrap: anywhere; white-space: normal; }
 .hint { color: var(--text-3); font-size: 12.5px; }
+/* the token, folded away under the tokenless snippet */
+details.alt { border: 1px solid var(--border); border-radius: var(--radius-sm); margin: 12px 0 4px; }
+details.alt summary { cursor: pointer; padding: 10px 14px; font-size: 13px; color: var(--text-2); }
+details.alt[open] summary { border-bottom: 1px solid var(--border-soft); }
+details.alt .alt-bd { padding: 12px 14px 0; }
 
 /* reporting capability card (Workspace step) — connect-only, two states */
 .cap { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; margin: 4px 0; }

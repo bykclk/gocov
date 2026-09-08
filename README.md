@@ -10,20 +10,24 @@ badge included), or self-host the same product: one Go binary plus Postgres.
 
 ## Coverage on your pull requests in three steps
 
-1. Sign in at [app.gocov.dev](https://app.gocov.dev) and claim your workspace — it shows your upload token, once.
-2. Add the token to CI as a secret named `GOCOV_TOKEN`.
-3. Add one step after your tests (GitHub Actions shown):
+1. Sign in at [app.gocov.dev](https://app.gocov.dev) and claim your workspace.
+2. Connect it to your forge — one click; on GitHub it is the same App install.
+3. Add one step after your tests, no secret needed (GitHub Actions shown):
 
 ```yaml
-- run: npx jest --coverage        # or go test -coverprofile, mvn verify, pytest --cov, ...
-- uses: gocov/gocov-action@v1
-  with:
-    files: coverage/lcov.info
-    token: ${{ secrets.GOCOV_TOKEN }}
+permissions:
+  id-token: write                 # the job proves its identity; nothing to paste
+steps:
+  - run: npx jest --coverage      # or go test -coverprofile, mvn verify, pytest --cov, ...
+  - uses: gocov/gocov-action@v1
+    with:
+      files: coverage/lcov.info
 ```
 
-The action downloads the CLI binary and checks its sha256, so there is no toolchain to install — the same three lines
-work whatever your tests are written in; point `files` at whatever your test runner produced. Recipes for the rest:
+The job's short-lived identity token replaces the upload secret; a `GOCOV_TOKEN` secret still works where a CI cannot
+mint one. The action downloads the CLI binary and checks its sha256, so there is no toolchain to install — the same
+lines work whatever your tests are written in; point `files` at whatever your test runner produced. Recipes for the
+rest:
 [GitLab CI](docs/gitlab-ci.md) · [Bitbucket Pipelines](docs/bitbucket-pipelines.md) ·
 [any other CI](docs/ci-other.md) · [languages & formats](docs/languages.md)
 
