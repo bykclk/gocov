@@ -74,6 +74,8 @@ The full documentation is at **[docs.gocov.dev](https://docs.gocov.dev)**, built
 repository:
 
 - [Getting started](docs/getting-started.md) — sign in, one CI step, first report
+- [Migrating from Codecov or Coveralls](docs/migrating.md) — the action inputs, `codecov.yml` and the Coveralls
+  settings mapped onto gocov, and the order that keeps the old tool running until the numbers agree
 - Uploading from CI — [GitHub Actions](docs/github-actions.md), [GitLab CI](docs/gitlab-ci.md),
   [Bitbucket Pipelines](docs/bitbucket-pipelines.md), [other CI systems](docs/ci-other.md),
   [languages & formats](docs/languages.md)

@@ -15,6 +15,9 @@ Use the hosted service at [app.gocov.dev](https://app.gocov.dev/?ref=docs), or
    [Bitbucket Pipelines](bitbucket-pipelines.md), or [any other CI](ci-other.md).
 3. **[Your language](languages.md)** — the test command and upload line for each supported ecosystem.
 
+Coming from Codecov or Coveralls? [Migrating](migrating.md) maps their settings onto gocov's and gives the order
+that keeps the old tool running until the numbers agree.
+
 ## Guides
 
 | Page                                        | Covers                                                              |

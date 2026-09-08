@@ -20,6 +20,7 @@ strict = true
 nav = [
   { Home = "README.md" },
   { "Getting started" = "getting-started.md" },
+  { "Migrating from Codecov or Coveralls" = "migrating.md" },
   { "Upload from CI" = [
     { "GitHub Actions" = "github-actions.md" },
     { "GitLab CI" = "gitlab-ci.md" },
