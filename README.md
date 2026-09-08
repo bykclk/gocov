@@ -57,8 +57,12 @@ docker compose up
 
 This starts Postgres and the server on http://localhost:8080 (migrations apply automatically). Then
 [enable sign-in](docs/sign-in.md) with your forge, sign in — the onboarding wizard registers your workspace and mints
-its upload token — and set `GOCOV_TOKEN` and `GOCOV_SERVER` in CI. The path from there to a production instance (TLS,
-the secret key, your own GitHub App, upgrades) is in [Self-hosting](docs/self-hosting.md).
+its upload token — and set `GOCOV_TOKEN` and `GOCOV_SERVER` in CI.
+
+For a real instance, every release publishes `ghcr.io/gocov/gocov-server` for amd64 and arm64, and
+[deploy/](deploy/README.md) has the production compose file: the pinned image behind Caddy (TLS included), Postgres
+external or bundled, one `.env` to fill in. The operator's guide — the secret key, your own GitHub App, backups,
+upgrades — is [Self-hosting](docs/self-hosting.md).
 
 ## Documentation
 

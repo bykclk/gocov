@@ -161,11 +161,13 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-  # The self-host path, exercised on every release with the image just
-  # pushed: the root compose file (Postgres + server, the way a self-hoster
-  # runs it) comes up from the pulled image, migrates, answers /healthz and
-  # the home page, and turns an upload with a bad token away. Production
-  # no longer runs compose, so nothing else would notice this path rotting.
+  # The self-host paths, exercised on every release with the image just
+  # pushed. First the root compose file (the evaluation stack) comes up
+  # from the pulled image, migrates, answers /healthz and the home page,
+  # and turns an upload with a bad token away. Then deploy/'s production
+  # compose does the same with its bundled Postgres, through Caddy on
+  # https://localhost (Caddy's own CA, hence -k). Production no longer
+  # runs compose, so nothing else would notice either path rotting.
   selfhost-smoke:
     needs: image
     runs-on: ubuntu-latest
@@ -194,9 +196,39 @@ jobs:
             -F "repo=gocov/smoke" -F "commit=0000000000000000000000000000000000000000" \
             -F "file=@go.mod" http://localhost:8080/api/v1/upload)
           [ "$code" = 401 ] || { echo "upload with a bad token answered $code, want 401" >&2; exit 1; }
+      - name: Bring the production compose up from the released image
+        working-directory: deploy
+        run: |
+          set -euo pipefail
+          # The evaluation stack is done; free its Postgres and port first.
+          docker compose -f ../docker-compose.yml -f ../.github/compose-smoke.yml down -v
+          # .env.example with the four required values filled in and the
+          # bundled Postgres turned on, the way the docs say to.
+          sed -e "s/^GOCOV_VERSION=.*/GOCOV_VERSION=$TAG/" \
+              -e 's/^GOCOV_HOST=.*/GOCOV_HOST=localhost/' \
+              -e 's#^GOCOV_BASE_URL=.*#GOCOV_BASE_URL=https://localhost#' \
+              -e "s/^GOCOV_SECRET_KEY=.*/GOCOV_SECRET_KEY=$(openssl rand -hex 32)/" \
+              -e '/^DATABASE_URL=$/d' \
+              -e 's/^#COMPOSE_PROFILES=db/COMPOSE_PROFILES=db/' \
+              -e 's/^#POSTGRES_PASSWORD=/POSTGRES_PASSWORD=/' \
+              -e 's/^#DATABASE_URL=/DATABASE_URL=/' \
+              .env.example > .env
+          docker compose -f docker-compose.prod.yml up -d --wait --wait-timeout 120
+      - name: Smoke the production compose
+        run: |
+          set -euo pipefail
+          curl -fsSk https://localhost/healthz
+          curl -fsSk -o /dev/null https://localhost/
+          code=$(curl -sk -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer not-a-token" \
+            -F "repo=gocov/smoke" -F "commit=0000000000000000000000000000000000000000" \
+            -F "file=@go.mod" https://localhost/api/v1/upload)
+          [ "$code" = 401 ] || { echo "upload with a bad token answered $code, want 401" >&2; exit 1; }
       - name: Logs
         if: failure()
-        run: docker compose -f docker-compose.yml -f .github/compose-smoke.yml logs
+        run: |
+          docker compose -f docker-compose.yml -f .github/compose-smoke.yml logs || true
+          docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env logs || true
 
   # A release is not finished until the wrappers follow: this opens a bump
   # PR in gocov-action (action.yml's pinned CLI) and upload-pipe

@@ -23,6 +23,7 @@ cd "$(dirname "$0")/.."
 #   curl .../releases/download/v0.12.0/gocov-linux-amd64
 #   ver=v0.12.0
 #   image: ghcr.io/gocov/gocov-server:v0.12.0
+#   GOCOV_VERSION=v0.12.0        (deploy/.env.example)
 # (the server image and the CLI version together on every release, so one
 # pin pool covers both)
 # CHANGELOG.md is excluded: its older entries name older releases on
@@ -33,6 +34,7 @@ pins=$(git grep -InEo \
   -e 'releases/download/v[0-9]+\.[0-9]+\.[0-9]+' \
   -e 'ver=v[0-9]+\.[0-9]+\.[0-9]+' \
   -e 'gocov-server:v[0-9]+\.[0-9]+\.[0-9]+' \
+  -e 'GOCOV_VERSION=v[0-9]+\.[0-9]+\.[0-9]+' \
   -- ':!CHANGELOG.md' ':!scripts/check-pins.sh' ':!internal/hosted/pinned_test.go' || true)
 
 if [ -z "$pins" ]; then

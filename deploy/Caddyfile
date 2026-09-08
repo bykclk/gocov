@@ -1,8 +1,9 @@
-# TLS in front of the server, for docker-compose.prod.yml. Replace the
-# hostname; Caddy obtains and renews the certificate itself. The body
-# limit must stay above the server's own 64 MiB upload cap, or the proxy
-# rejects large reports before gocov sees them (docs/self-hosting.md).
-gocov.example.com {
+# TLS in front of the server, for docker-compose.prod.yml. The hostname is
+# GOCOV_HOST from .env; Caddy obtains and renews the certificate itself.
+# The body limit must stay above the server's own 64 MiB upload cap, or
+# the proxy rejects large reports before gocov sees them
+# (docs/self-hosting.md).
+{$GOCOV_HOST} {
 	request_body {
 		max_size 100MB
 	}

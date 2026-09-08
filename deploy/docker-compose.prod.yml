@@ -1,32 +1,46 @@
-# Production compose for a self-hosted gocov: the app plus a Caddy TLS
-# terminator. Postgres is external — set DATABASE_URL in .env. Run from
-# this directory:  docker compose -f docker-compose.prod.yml up -d
+# Production compose for a self-hosted gocov: the server behind a Caddy TLS
+# terminator, and optionally Postgres. Everything it reads comes from .env
+# next to it — copy .env.example and fill it in, then, from this directory:
+#
+#   docker compose -f docker-compose.prod.yml up -d
 #
 # The image is pulled from GHCR, never built here: GOCOV_VERSION in .env
 # pins the exact release; an upgrade is editing it and pulling again, and
 # a rollback is the older tag, same pull. This is what the hosted instance
 # ran on a single VM until September 2026 (it is on Fargate now, see
-# README.md), with the hostname and the certificate swapped for Caddy's
-# own ACME: put your hostname in the Caddyfile and open 80/443.
+# README.md), with the hostname swapped for yours: Caddy obtains and
+# renews the certificate itself, so open 80 and 443 and point GOCOV_HOST's
+# DNS at the machine.
+#
+# Postgres is external by default — set DATABASE_URL in .env. For a small
+# instance, COMPOSE_PROFILES=db in .env runs Postgres here too, in a named
+# volume on the same host; see .env.example for the DATABASE_URL that
+# goes with it.
 services:
   server:
-    image: ghcr.io/gocov/gocov-server:${GOCOV_VERSION:?pin a release tag in .env, e.g. GOCOV_VERSION=v0.12.0}
+    image: ghcr.io/gocov/gocov-server:${GOCOV_VERSION:?pin a release tag in .env (see .env.example)}
     restart: unless-stopped
+    # SIGTERM drains in-flight uploads for up to 15 s; Docker's default
+    # 10 s stop timeout would cut one in half on every restart.
+    stop_grace_period: 20s
     logging:
       driver: json-file
       options:
         max-size: "20m"
         max-file: "5"
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env (or COMPOSE_PROFILES=db plus the bundled-Postgres DSN)}
       GOCOV_ADDR: ":8080"
-      GOCOV_BASE_URL: ${GOCOV_BASE_URL}
+      GOCOV_BASE_URL: ${GOCOV_BASE_URL:?set GOCOV_BASE_URL in .env, e.g. https://gocov.example.com}
       # private (default) restricts sign-in to tracked-workspace members;
       # hosted opens self-service registration. See docs/sign-in.md.
       GOCOV_MODE: ${GOCOV_MODE:-private}
-      GOCOV_SECRET_KEY: ${GOCOV_SECRET_KEY}
+      GOCOV_SECRET_KEY: ${GOCOV_SECRET_KEY:?set GOCOV_SECRET_KEY in .env (openssl rand -hex 32)}
       GOCOV_GITHUB_APP_ID: ${GOCOV_GITHUB_APP_ID:-}
-      GOCOV_GITHUB_APP_PRIVATE_KEY: ${GOCOV_GITHUB_APP_PRIVATE_KEY:-/run/gocov-app-key.pem}
+      # The App key is a file on the host, mounted below; the server sees
+      # the path only when GOCOV_GITHUB_APP_KEY_FILE is set, so an instance
+      # without a GitHub App does not start with a half-configured one.
+      GOCOV_GITHUB_APP_PRIVATE_KEY: ${GOCOV_GITHUB_APP_KEY_FILE:+/run/gocov-app-key.pem}
       GOCOV_OAUTH_BITBUCKET_KEY: ${GOCOV_OAUTH_BITBUCKET_KEY:-}
       GOCOV_OAUTH_BITBUCKET_SECRET: ${GOCOV_OAUTH_BITBUCKET_SECRET:-}
       GOCOV_OAUTH_GITHUB_KEY: ${GOCOV_OAUTH_GITHUB_KEY:-}
@@ -34,10 +48,20 @@ services:
       GOCOV_OAUTH_GITLAB_KEY: ${GOCOV_OAUTH_GITLAB_KEY:-}
       GOCOV_OAUTH_GITLAB_SECRET: ${GOCOV_OAUTH_GITLAB_SECRET:-}
       GOCOV_GITHUB_WEBHOOK_SECRET: ${GOCOV_GITHUB_WEBHOOK_SECRET:-}
+      GOCOV_OIDC_ISSUERS: ${GOCOV_OIDC_ISSUERS:-}
     volumes:
-      - ./github-app.pem:/run/gocov-app-key.pem:ro
+      # /dev/null stands in when there is no key file, so the mount always
+      # resolves; the server never looks at it unless the variable above
+      # names it.
+      - ${GOCOV_GITHUB_APP_KEY_FILE:-/dev/null}:/run/gocov-app-key.pem:ro
     expose:
       - "8080"
+    depends_on:
+      db:
+        condition: service_healthy
+        # Only when the db profile is on; with an external Postgres the
+        # service does not exist and this is ignored.
+        required: false
     healthcheck:
       # The runtime image is distroless — no wget, no shell — so the
       # binary probes its own /healthz.
@@ -48,6 +72,34 @@ services:
       timeout: 3s
       retries: 3
 
+  # Bundled Postgres, off unless COMPOSE_PROFILES=db. Not published on any
+  # port: the server reaches it as db:5432 on the compose network, and
+  # nothing else needs to. Back it up with
+  #   docker compose -f docker-compose.prod.yml exec db pg_dump -U gocov gocov > gocov.sql
+  db:
+    image: postgres:18-alpine
+    profiles: ["db"]
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    environment:
+      POSTGRES_USER: gocov
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env when COMPOSE_PROFILES=db}
+      POSTGRES_DB: gocov
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/<major>/ and
+      # declare the volume at /var/lib/postgresql, so the mount sits there
+      # for the data to persist (docker-library/postgres#1259).
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gocov -d gocov"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -56,6 +108,10 @@ services:
       options:
         max-size: "20m"
         max-file: "5"
+    environment:
+      # The site address in the Caddyfile. A public hostname gets a
+      # Let's Encrypt certificate; "localhost" gets one from Caddy's own CA.
+      GOCOV_HOST: ${GOCOV_HOST:?set GOCOV_HOST in .env, e.g. gocov.example.com}
     ports:
       - "80:80"
       - "443:443"
@@ -69,3 +125,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  pgdata:
