@@ -245,6 +245,9 @@ func (s *Server) setupViewData(r *http.Request, ws *store.Workspace, owner bool)
 		// workspace it can verify through its forge connection, which is
 		// exactly what the previous step's Connect established.
 		"Tokenless": oidcReady(ws),
+		// A connection that exists but no longer works: the wizard names
+		// the reconnect as what brings tokenless uploads back.
+		"ConnectionBroken": connectionBroken(ws),
 	}
 	if owner {
 		data["Token"] = ws.Token
@@ -263,16 +266,31 @@ func (s *Server) setupViewData(r *http.Request, ws *store.Workspace, owner bool)
 
 // oidcReady reports whether uploads from the workspace's repos can
 // authenticate with a forge-minted OIDC identity token instead of the
-// upload token: the workspace has to be connected to its forge, since that
-// connection is what the server verifies the token's repository against.
+// upload token: the workspace has to be connected to its forge, and the
+// connection has to work, since it is what the server verifies the
+// token's repository against — a broken grant refuses those uploads.
 func oidcReady(ws *store.Workspace) bool {
 	switch ws.Forge {
 	case "github":
-		return ws.GitHubInstallationID != 0
+		return ws.GitHubInstallationID != 0 && !ws.GitHubAppBroken
 	case "bitbucket":
-		return ws.BitbucketGrantAccount != ""
+		return ws.BitbucketGrantAccount != "" && !ws.BitbucketGrantBroken
 	case "gitlab":
-		return ws.GitLabGrantAccount != ""
+		return ws.GitLabGrantAccount != "" && !ws.GitLabGrantBroken
+	}
+	return false
+}
+
+// connectionBroken reports a forge connection that exists but no longer
+// works, so the wizard can point at the reconnect rather than at Connect.
+func connectionBroken(ws *store.Workspace) bool {
+	switch ws.Forge {
+	case "github":
+		return ws.GitHubInstallationID != 0 && ws.GitHubAppBroken
+	case "bitbucket":
+		return ws.BitbucketGrantAccount != "" && ws.BitbucketGrantBroken
+	case "gitlab":
+		return ws.GitLabGrantAccount != "" && ws.GitLabGrantBroken
 	}
 	return false
 }

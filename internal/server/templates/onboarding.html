@@ -1,13 +1,15 @@
 {{define "title"}}gocov — set up coverage{{end}}
 {{define "content"}}
 {{/* The wizard root names the step and face it shows for the analytics
-     snippet (data-ph-view fires onboarding_step_viewed with that context
+     snippet, plus on the CI step whether it led with an identity token
+     (auth=oidc) or the upload token (auth=token); data-ph-view fires
+     onboarding_step_viewed with that context
      once per load); the buttons below declare their own click events. */}}
 {{$step := "workspace"}}{{$face := ""}}
 {{if eq .Active 0}}{{$face = .WSState}}
 {{else if eq .Active 1}}{{$step = "wire_ci"}}{{$face = "ci"}}
 {{else}}{{$step = "first_upload"}}{{$face = "awaiting"}}{{if .Repos}}{{$face = "received"}}{{end}}{{end}}
-<div class="wiz" data-ph-view="onboarding_step_viewed" data-ph-step="{{$step}}" data-ph-face="{{$face}}" data-ph-forge="{{.Forge}}">
+<div class="wiz" data-ph-view="onboarding_step_viewed" data-ph-step="{{$step}}" data-ph-face="{{$face}}" data-ph-forge="{{.Forge}}"{{if eq .Active 1}} data-ph-auth="{{if .Tokenless}}oidc{{else}}token{{end}}"{{end}}>
   <div class="head">
     <h1>Set up coverage</h1>
     <p class="sub">Three steps, about two minutes. You can leave and come back &mdash; progress is saved.</p>
@@ -190,8 +192,14 @@
     <code>GOCOV_SERVER</code>, a plain value.{{end}}</p>
     {{else}}
     {{template "wiz-token-where" .}}
+    {{if .ConnectionBroken}}
+    <p class="sub hint">The workspace&rsquo;s connection to {{.ForgeLabel}} no longer works, so jobs cannot
+    upload with an identity token until it is reconnected in the previous step; once it is, the token goes
+    away.</p>
+    {{else}}
     <p class="sub hint">Connect the workspace in the previous step and the token goes away: a connected
     workspace&rsquo;s jobs authenticate with an identity token from {{.ForgeLabel}} instead.</p>
+    {{end}}
     {{end}}
 
     {{if not .ServerImplicit}}

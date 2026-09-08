@@ -575,6 +575,7 @@ func TestSetupPageTokenlessGitHub(t *testing.T) {
 		`<details class="alt">`,
 		`data-full="gh-secret"`,
 		`data-ph-click="show_token_clicked"`,
+		`data-ph-auth="oidc"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("tokenless github setup page misses %q:\n%s", want, body)
@@ -584,6 +585,46 @@ func TestSetupPageTokenlessGitHub(t *testing.T) {
 	// snippet itself must not.
 	if sn := snippetOf(body); strings.Contains(sn, "GOCOV_TOKEN") {
 		t.Errorf("tokenless github snippet should not pass a token:\n%s", sn)
+	}
+}
+
+// A connection that exists but is broken cannot verify identity tokens,
+// so the wizard falls back to the token-first card and names the
+// reconnect as the way back to tokenless uploads.
+func TestSetupPageBrokenConnectionFallsBackToToken(t *testing.T) {
+	st := storemem.New()
+	if err := st.CreateWorkspace(t.Context(), &store.Workspace{
+		Forge: "github", Prefix: "myorg", Token: "gh-secret", DefaultBranch: "main",
+		GitHubInstallationID: 4243, GitHubAppBroken: true}); err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeProvider{name: "github", identity: &auth.Identity{
+		ForgeUUID: "42", DisplayName: "Hub Dev", Workspaces: []string{"myorg"}, OwnedWorkspaces: []string{"myorg"},
+	}}
+	f := &fixture{
+		srv: New(Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			BaseURL: "https://gocov.example",
+			Auths:   []auth.Provider{gh},
+		}),
+		store: st,
+	}
+	sess := signInVia(t, f, "github")
+
+	body := get(f, "/workspaces/myorg/setup", sess).Body.String()
+	for _, want := range []string{
+		"${{ secrets.GOCOV_TOKEN }}",
+		"no longer works",
+		`data-ph-auth="token"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("broken-connection setup page misses %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "id-token: write") {
+		t.Errorf("broken-connection setup page should not lead with OIDC:\n%s", body)
 	}
 }
 
