@@ -97,7 +97,7 @@ func TestWebhookInstallationFlipsBrokenFlag(t *testing.T) {
 	srv, st, _ := webhookServer(t)
 
 	broken := func() bool {
-		ws, err := st.WorkspaceByPrefix(t.Context(), "acme")
+		ws, err := st.WorkspaceByPrefix(t.Context(), "github", "acme")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,9 +141,9 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	visibility := func(slug string) *store.Repo {
+	visibility := func(forge, slug string) *store.Repo {
 		t.Helper()
-		r, err := st.RepoBySlug(ctx, slug)
+		r, err := st.RepoBySlug(ctx, forge, slug)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -156,7 +156,7 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 	if rec := postWebhook(srv, "repository", priv, sign(webhookSecret, priv)); rec.Code != http.StatusOK {
 		t.Fatalf("repository privatized: status = %d", rec.Code)
 	}
-	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPrivate {
+	if got := visibility("github", "acme/widgets"); got.Visibility != store.VisibilityPrivate {
 		t.Errorf("visibility after privatized = %q, want private", got.Visibility)
 	} else if got.VisibilityCheckedAt.IsZero() {
 		t.Error("webhook flip did not stamp VisibilityCheckedAt")
@@ -173,7 +173,7 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 	if rec := postWebhook(srv, "repository", pub, sign(webhookSecret, pub)); rec.Code != http.StatusOK {
 		t.Fatalf("repository publicized: status = %d", rec.Code)
 	}
-	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPrivate {
+	if got := visibility("github", "acme/widgets"); got.Visibility != store.VisibilityPrivate {
 		t.Errorf("a publicized event the forge contradicts reopened the repo: %q", got.Visibility)
 	}
 	if len(ff.VisibilityCalls) != 1 {
@@ -185,7 +185,7 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 	if rec := postWebhook(srv, "repository", pub, sign(webhookSecret, pub)); rec.Code != http.StatusOK {
 		t.Fatalf("repository publicized again: status = %d", rec.Code)
 	}
-	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPublic {
+	if got := visibility("github", "acme/widgets"); got.Visibility != store.VisibilityPublic {
 		t.Errorf("visibility after verified publicized = %q, want public", got.Visibility)
 	}
 
@@ -208,7 +208,7 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 	if rec := postWebhook(srv, "repository", cross, sign(webhookSecret, cross)); rec.Code != http.StatusOK {
 		t.Fatalf("cross-forge slug: status = %d", rec.Code)
 	}
-	if got := visibility("beta/things"); got.Visibility != store.VisibilityPublic {
+	if got := visibility("bitbucket", "beta/things"); got.Visibility != store.VisibilityPublic {
 		t.Errorf("a GitHub event flipped a bitbucket repo to %q", got.Visibility)
 	}
 
@@ -217,7 +217,7 @@ func TestWebhookRepositoryVisibilityChange(t *testing.T) {
 	if rec := postWebhook(srv, "repository", ren, sign(webhookSecret, ren)); rec.Code != http.StatusOK {
 		t.Errorf("renamed: status = %d", rec.Code)
 	}
-	if got := visibility("acme/widgets"); got.Visibility != store.VisibilityPublic {
+	if got := visibility("github", "acme/widgets"); got.Visibility != store.VisibilityPublic {
 		t.Errorf("renamed changed visibility to %q", got.Visibility)
 	}
 }

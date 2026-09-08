@@ -67,7 +67,7 @@ func (s *Server) resolveUploadRepo(w http.ResponseWriter, r *http.Request, repo 
 		return nil, false, false
 	}
 
-	repo, err := s.store.RepoBySlug(ctx, slug)
+	repo, err := s.store.RepoBySlug(ctx, ws.Forge, slug)
 	if err == nil {
 		return repo, false, true
 	}

@@ -53,15 +53,15 @@ func (s *Server) handleSitemap(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	slugs, err := s.store.PublicRepoSlugs(r.Context(), sitemapMaxEntries)
+	refs, err := s.store.PublicRepoRefs(r.Context(), sitemapMaxEntries)
 	if err != nil {
 		s.internalError(w, "listing public repos for sitemap", err)
 		return
 	}
 	base := strings.TrimSuffix(s.baseURL, "/")
 	sm := sitemap{Xmlns: "http://www.sitemaps.org/schemas/sitemap/0.9"}
-	for _, slug := range slugs {
-		sm.URLs = append(sm.URLs, sitemapURL{Loc: base + "/repos/" + slug})
+	for _, ref := range refs {
+		sm.URLs = append(sm.URLs, sitemapURL{Loc: base + repoPath(ref.Forge, ref.Slug)})
 	}
 	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600")

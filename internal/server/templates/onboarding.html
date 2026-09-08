@@ -83,7 +83,6 @@
         <span><span class="n">{{.Prefix}}</span><br>
         {{if eq .State "member"}}<span class="m">Registered &mdash; you&rsquo;re a member</span>
         {{else if eq .State "registered"}}<span class="m">Registered &mdash; join to start uploading</span>
-        {{else if eq .State "taken"}}<span class="m">Name registered under {{.TakenBy}} on this server &mdash; unavailable here</span>
         {{else if eq .State "unowned"}}<span class="m">Not set up &mdash; creating it takes an owner of the {{$noun}}; ask one to sign in and register it</span>
         {{else}}<span class="m">Not set up</span>{{end}}</span>
         {{if eq .State "member"}}<a class="btn" href="/">Open dashboard</a>
@@ -121,7 +120,7 @@
     <div class="foot">
       <a class="btn" href="/onboarding" data-ph-click="change_workspace_clicked">Change {{if eq .Forge "github"}}install{{else}}workspace{{end}}</a>
       <span class="spacer"></span>
-      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup" data-ph-click="continue_to_ci_clicked">Continue to CI</a>
+      <a class="btn primary" href="{{wsurl .Workspace "/setup"}}" data-ph-click="continue_to_ci_clicked">Continue to CI</a>
     </div>
   </div>
 </section>
@@ -338,7 +337,7 @@ pipelines:
       <span class="hint">Reporting and CI are independent &mdash; coverage uploads even if
       reporting is off.</span>
       <span class="spacer"></span>
-      <a class="btn primary" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup?awaiting=1" data-ph-click="added_to_ci_clicked">I&rsquo;ve added these</a>
+      <a class="btn primary" href="{{wsurl .Workspace "/setup?awaiting=1"}}" data-ph-click="added_to_ci_clicked">I&rsquo;ve added these</a>
     </div>
   </div>
 </section>
@@ -401,7 +400,7 @@ Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
 <div class="card pad" id="setup-status"{{if .Landed}} data-ph-view="first_upload_received"{{end}}>
   <h2>Coverage is flowing</h2>
   {{with .FirstReport}}
-  <p class="sub">First profile received from <code>{{.Slug}}</code> on <code>{{.Branch}}</code>{{if .CommitShort}} &middot; commit <code>{{.CommitShort}}</code>{{end}}.</p>
+  <p class="sub">First profile received from <code>{{.Repo.Slug}}</code> on <code>{{.Branch}}</code>{{if .CommitShort}} &middot; commit <code>{{.CommitShort}}</code>{{end}}.</p>
   <div class="mini">
     <div class="hd">First report</div>
     <table>
@@ -411,7 +410,7 @@ Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
   </div>
   {{else}}
   <p class="sub">Coverage is live:
-    {{range $i, $repo := .Repos}}{{if $i}}, {{end}}<a class="mono" href="/repos/{{$repo.Slug}}">{{$repo.Slug}}</a>{{end}}</p>
+    {{range $i, $repo := .Repos}}{{if $i}}, {{end}}<a class="mono" href="{{repourl $repo}}">{{$repo.Slug}}</a>{{end}}</p>
   {{end}}
   {{if .ReportsPosted}}
   <div class="notice ok">{{.ReportsPosted}}</div>
@@ -421,13 +420,13 @@ Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
     to get statuses on every commit.</div>
   {{end}}
   <div class="foot">
-    {{with .FirstReport}}<a class="btn primary" href="/repos/{{.Slug}}" data-ph-click="open_dashboard_clicked">Open the dashboard</a>{{else}}<a class="btn primary" href="/" data-ph-click="open_dashboard_clicked">Open the dashboard</a>{{end}}
-    <a class="btn" href="/workspaces/{{pathesc .Workspace.Prefix}}" data-ph-click="set_gate_clicked">Set a coverage gate</a>
+    {{with .FirstReport}}<a class="btn primary" href="{{repourl .Repo}}" data-ph-click="open_dashboard_clicked">Open the dashboard</a>{{else}}<a class="btn primary" href="/" data-ph-click="open_dashboard_clicked">Open the dashboard</a>{{end}}
+    <a class="btn" href="{{wsurl .Workspace ""}}" data-ph-click="set_gate_clicked">Set a coverage gate</a>
   </div>
 </div>
 {{else}}
 <div class="card pad" id="setup-status"
-     hx-get="/workspaces/{{pathesc .Workspace.Prefix}}/setup/status"
+     hx-get="{{wsurl .Workspace "/setup/status"}}"
      hx-trigger="every 3s" hx-swap="outerHTML">
   <h2>Push a commit</h2>
   <p class="sub">The next pipeline run that reaches the upload step registers the repository and
@@ -435,7 +434,7 @@ Add <code>GOCOV_TOKEN</code>, marked secured{{if not .ServerImplicit}}, and
   <div class="notice wait"><span class="spin"></span> Waiting for your first upload from
     <strong>{{.Workspace.Prefix}}</strong>&hellip; this page updates by itself.</div>
   <div class="foot">
-    <a class="btn" href="/workspaces/{{pathesc .Workspace.Prefix}}/setup">Back</a>
+    <a class="btn" href="{{wsurl .Workspace "/setup"}}">Back</a>
   </div>
 </div>
 {{end}}

@@ -19,11 +19,10 @@ import (
 	"github.com/gocov/gocov/internal/store"
 )
 
-// handleRepo implements GET /repos/{workspace}/{repo} — stats, badge embed,
-// branch filter and the upload list.
+// handleRepo implements GET /repos/{forge}/{workspace}/{repo} — stats,
+// badge embed, branch filter and the upload list.
 func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	repo, err := s.store.RepoBySlug(r.Context(), slug)
+	repo, err := s.store.RepoBySlug(r.Context(), r.PathValue("forge"), r.PathValue("slug"))
 	if errors.Is(err, store.ErrNotFound) {
 		s.reportNotFound(w, r)
 		return
@@ -120,13 +119,11 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The settings link is for members; anyone admitted through the
-	// public branch — anonymous or a signed-in non-member — gets neither
-	// the button nor the workspace lookup behind it.
-	wsPrefix := ""
-	if member {
-		wsPrefix = s.repoWorkspacePrefix(r.Context(), repo)
-	}
+	// The settings link is for members of a tracked workspace; anyone
+	// admitted through the public branch — anonymous or a signed-in
+	// non-member — gets neither the button nor the workspace lookup
+	// behind it.
+	settings := member && s.forges.WorkspaceFor(r.Context(), repo.Slug, repo.Forge) != nil
 
 	s.render(w, r, "repo.html", map[string]any{
 		"Repo":          repo,
@@ -135,9 +132,9 @@ func (s *Server) handleRepo(w http.ResponseWriter, r *http.Request) {
 		"Uncovered":     uncovered,
 		"LastUpload":    lastProv,
 		"FilesView":     filesView,
-		"WSPrefix":      wsPrefix,
+		"Settings":      settings,
 		"PublicView":    s.publicView(r),
-		"BadgeMarkdown": s.badgeMarkdown(repo.Slug),
+		"BadgeMarkdown": s.badgeMarkdown(repo),
 		"GateSummary":   gateSummary(repo.Gate),
 		"Branches":      branches,
 		"Branch":        branch,
@@ -252,23 +249,4 @@ func (s *Server) repoVerdict(latest *store.CommitReport, repo *store.Repo, base 
 	}
 	v.Reason = core.GateReason(latest.TotalPct, latest.DiffCoverage, repo.Gate, baseTotal, base != nil, "The latest commit")
 	return v
-}
-
-// missFile is one file in the "where coverage is missing" table.
-// repoWorkspacePrefix resolves the tracked workspace a repo belongs to — its
-// most specific registered slug prefix on the same forge — so the page can
-// link to that workspace's settings. Returns "" when none is tracked.
-func (s *Server) repoWorkspacePrefix(ctx context.Context, repo *store.Repo) string {
-	workspaces, err := s.store.ListWorkspaces(ctx)
-	if err != nil {
-		return ""
-	}
-	for _, prefix := range core.SlugPrefixes(repo.Slug) { // longest (most specific) first
-		for _, ws := range workspaces {
-			if ws.Forge == repo.Forge && ws.Prefix == prefix {
-				return prefix
-			}
-		}
-	}
-	return ""
 }

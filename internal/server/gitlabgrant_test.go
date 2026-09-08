@@ -101,7 +101,7 @@ func newGLConnectFixture(t *testing.T) (*glConnectFixture, *http.Cookie) {
 
 func (f *glConnectFixture) workspace(t *testing.T) *store.Workspace {
 	t.Helper()
-	ws, err := f.store.WorkspaceByPrefix(t.Context(), "grp/sub")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "gitlab", "grp/sub")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func (f *glConnectFixture) upload(t *testing.T) uploadResponse {
 func TestGitLabConnectFlow(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 
-	start := get(f.fixture, "/workspaces/grp%2Fsub/gitlab/connect", sess)
+	start := get(f.fixture, "/workspaces/gitlab/grp%2Fsub/connect", sess)
 	if start.Code != http.StatusFound {
 		t.Fatalf("connect start: status = %d", start.Code)
 	}
@@ -164,7 +164,7 @@ func TestGitLabConnectFlow(t *testing.T) {
 		t.Fatalf("callback: status = %d, body = %s", cb.Code, cb.Body)
 	}
 	// The nested prefix must come back %2F-encoded in the redirect.
-	if loc := cb.Header().Get("Location"); loc != "/workspaces/grp%2Fsub?connected=1" {
+	if loc := cb.Header().Get("Location"); loc != "/workspaces/gitlab/grp%2Fsub?connected=1" {
 		t.Errorf("callback redirect = %q", loc)
 	}
 	ws := f.workspace(t)
@@ -173,7 +173,7 @@ func TestGitLabConnectFlow(t *testing.T) {
 	}
 
 	// The settings page renders the connected identity and the notice.
-	body := get(f.fixture, "/workspaces/grp%2Fsub?connected=1", sess).Body.String()
+	body := get(f.fixture, "/workspaces/gitlab/grp%2Fsub?connected=1", sess).Body.String()
 	if !strings.Contains(body, "@covbot") || !strings.Contains(body, "Disconnect") {
 		t.Error("settings page must show the connected account and disconnect")
 	}
@@ -223,7 +223,7 @@ func TestGitLabConnectRequiresFeature(t *testing.T) {
 		Hosted:  true,
 	})}
 	sess := signInVia(t, f, "gitlab")
-	if rec := get(f, "/workspaces/grp/gitlab/connect", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/workspaces/gitlab/grp/connect", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("connect without feature: status = %d, want 404", rec.Code)
 	}
 	stray := &http.Cookie{Name: glConnectStateCookie, Value: "s|grp"}
@@ -308,7 +308,7 @@ func TestGitLabDisconnect(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
 
-	rec := postForm(f.fixture, "/workspaces/grp%2Fsub/gitlab/disconnect", url.Values{}, sess)
+	rec := postForm(f.fixture, "/workspaces/gitlab/grp%2Fsub/disconnect", url.Values{}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -321,13 +321,13 @@ func TestGitLabDisconnect(t *testing.T) {
 func TestSettingsPageGitLabStates(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 
-	body := get(f.fixture, "/workspaces/grp%2Fsub", sess).Body.String()
+	body := get(f.fixture, "/workspaces/gitlab/grp%2Fsub", sess).Body.String()
 	if !strings.Contains(body, "Grant write access") || !strings.Contains(body, "under your own account") {
 		t.Error("unconnected settings must offer to grant write access and state the identity caveat")
 	}
 
 	f.grant(t, "covbot", "rt-0", true)
-	body = get(f.fixture, "/workspaces/grp%2Fsub", sess).Body.String()
+	body = get(f.fixture, "/workspaces/gitlab/grp%2Fsub", sess).Body.String()
 	if !strings.Contains(body, "Reconnect needed") || !strings.Contains(body, "Grant write access again") {
 		t.Error("broken grant must surface the reconnect state")
 	}
@@ -337,13 +337,13 @@ func TestGitLabSetupPageRecommendsConnect(t *testing.T) {
 	f, sess := newGLConnectFixture(t)
 
 	body := get(f.fixture, "/onboarding?ws=grp%2Fsub", sess).Body.String()
-	if !strings.Contains(body, "/workspaces/grp%2Fsub/gitlab/connect") {
+	if !strings.Contains(body, "/workspaces/gitlab/grp%2Fsub/connect") {
 		t.Error("ready state must offer the connect with the encoded prefix link")
 	}
 
 	f.grant(t, "covbot", "rt-0", false)
 	body = get(f.fixture, "/onboarding?ws=grp%2Fsub", sess).Body.String()
-	if strings.Contains(body, "/workspaces/grp%2Fsub/gitlab/connect") {
+	if strings.Contains(body, "/workspaces/gitlab/grp%2Fsub/connect") {
 		t.Error("connected workspace must not offer the connect link")
 	}
 	if !strings.Contains(body, "@covbot") {

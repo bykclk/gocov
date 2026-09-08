@@ -169,10 +169,10 @@ func (s *Store) UpdateRepo(ctx context.Context, r *store.Repo) error {
 	return nil
 }
 
-func (s *Store) PublicRepoSlugs(ctx context.Context, limit int) ([]string, error) {
-	q := `SELECT slug FROM repos
+func (s *Store) PublicRepoRefs(ctx context.Context, limit int) ([]store.RepoRef, error) {
+	q := `SELECT forge, slug FROM repos
 		WHERE visibility = 'public' AND NOT public_reports_disabled
-		ORDER BY slug`
+		ORDER BY forge, slug`
 	var args []any
 	if limit > 0 {
 		q += ` LIMIT $1`
@@ -183,13 +183,13 @@ func (s *Store) PublicRepoSlugs(ctx context.Context, limit int) ([]string, error
 		return nil, err
 	}
 	defer rows.Close()
-	var out []string
+	var out []store.RepoRef
 	for rows.Next() {
-		var slug string
-		if err := rows.Scan(&slug); err != nil {
+		var ref store.RepoRef
+		if err := rows.Scan(&ref.Forge, &ref.Slug); err != nil {
 			return nil, err
 		}
-		out = append(out, slug)
+		out = append(out, ref)
 	}
 	return out, rows.Err()
 }
@@ -250,9 +250,9 @@ func (s *Store) RepoByID(ctx context.Context, id int64) (*store.Repo, error) {
 		`SELECT `+repoCols+` FROM repos WHERE id = $1`, id))
 }
 
-func (s *Store) RepoBySlug(ctx context.Context, slug string) (*store.Repo, error) {
+func (s *Store) RepoBySlug(ctx context.Context, forge, slug string) (*store.Repo, error) {
 	return s.scanRepo(s.pool.QueryRow(ctx,
-		`SELECT `+repoCols+` FROM repos WHERE slug = $1`, slug))
+		`SELECT `+repoCols+` FROM repos WHERE forge = $1 AND slug = $2`, forge, slug))
 }
 
 func (s *Store) RepoByToken(ctx context.Context, token string) (*store.Repo, error) {
@@ -261,7 +261,7 @@ func (s *Store) RepoByToken(ctx context.Context, token string) (*store.Repo, err
 }
 
 func (s *Store) ListRepos(ctx context.Context) ([]*store.Repo, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+repoCols+` FROM repos ORDER BY slug`)
+	rows, err := s.pool.Query(ctx, `SELECT `+repoCols+` FROM repos ORDER BY forge, slug`)
 	if err != nil {
 		return nil, err
 	}
@@ -443,19 +443,20 @@ func (s *Store) DeleteWorkspace(ctx context.Context, id int64) error {
 	defer tx.Rollback(ctx) //nolint:errcheck // no-op after commit
 
 	// The workspace prefix decides which repos belong to it — repos carry
-	// no workspace_id, the tie is the slug prefix (M2 convention). Delete
-	// those repos first; uploads, upload_files and commit_reports cascade
-	// off repos(id). Membership rows cascade off the workspace row below.
-	var prefix string
+	// no workspace_id, the tie is the slug prefix on the same forge (M2
+	// convention). Delete those repos first; uploads, upload_files and
+	// commit_reports cascade off repos(id). Membership rows cascade off
+	// the workspace row below.
+	var forge, prefix string
 	if err := tx.QueryRow(ctx,
-		`SELECT prefix FROM workspaces WHERE id = $1`, id).Scan(&prefix); err != nil {
+		`SELECT forge, prefix FROM workspaces WHERE id = $1`, id).Scan(&forge, &prefix); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return store.ErrNotFound
 		}
 		return err
 	}
 	if _, err := tx.Exec(ctx,
-		`DELETE FROM repos WHERE slug LIKE $1 ESCAPE '\'`, likePrefix(prefix)+`/%`); err != nil {
+		`DELETE FROM repos WHERE forge = $1 AND slug LIKE $2 ESCAPE '\'`, forge, likePrefix(prefix)+`/%`); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM workspaces WHERE id = $1`, id); err != nil {
@@ -470,13 +471,13 @@ func likePrefix(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-func (s *Store) WorkspaceByPrefix(ctx context.Context, prefix string) (*store.Workspace, error) {
-	return s.workspaceByPrefix(ctx, s.pool, prefix)
+func (s *Store) WorkspaceByPrefix(ctx context.Context, forge, prefix string) (*store.Workspace, error) {
+	return s.workspaceByPrefix(ctx, s.pool, forge, prefix)
 }
 
-func (s *Store) workspaceByPrefix(ctx context.Context, q querier, prefix string) (*store.Workspace, error) {
+func (s *Store) workspaceByPrefix(ctx context.Context, q querier, forge, prefix string) (*store.Workspace, error) {
 	return s.scanWorkspace(q.QueryRow(ctx,
-		`SELECT `+workspaceCols+` FROM workspaces WHERE prefix = $1`, prefix))
+		`SELECT `+workspaceCols+` FROM workspaces WHERE forge = $1 AND prefix = $2`, forge, prefix))
 }
 
 // WithGrantLock runs fn inside a transaction holding a transaction-scoped
@@ -511,8 +512,8 @@ type grantTx struct {
 	tx pgx.Tx
 }
 
-func (g *grantTx) WorkspaceByPrefix(ctx context.Context, prefix string) (*store.Workspace, error) {
-	return g.s.workspaceByPrefix(ctx, g.tx, prefix)
+func (g *grantTx) WorkspaceByPrefix(ctx context.Context, forge, prefix string) (*store.Workspace, error) {
+	return g.s.workspaceByPrefix(ctx, g.tx, forge, prefix)
 }
 
 func (g *grantTx) SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error {
@@ -529,7 +530,7 @@ func (s *Store) WorkspaceByToken(ctx context.Context, token string) (*store.Work
 }
 
 func (s *Store) ListWorkspaces(ctx context.Context) ([]*store.Workspace, error) {
-	rows, err := s.pool.Query(ctx, `SELECT `+workspaceCols+` FROM workspaces ORDER BY prefix`)
+	rows, err := s.pool.Query(ctx, `SELECT `+workspaceCols+` FROM workspaces ORDER BY forge, prefix`)
 	if err != nil {
 		return nil, err
 	}
@@ -625,7 +626,7 @@ func (s *Store) ListWorkspacesForUser(ctx context.Context, userID int64) ([]*sto
 		FROM workspaces w
 		JOIN workspace_members m ON m.workspace_id = w.id
 		WHERE m.user_id = $1
-		ORDER BY w.prefix`, userID)
+		ORDER BY w.forge, w.prefix`, userID)
 	if err != nil {
 		return nil, err
 	}

@@ -276,29 +276,38 @@ func (f *Forges) Connected(ctx context.Context, ws *store.Workspace, forgeName s
 	return f.grantForge(ctx, ws, forgeName)
 }
 
-// WorkspaceFor returns the workspace owning the slug's prefix, nil when
-// there is none. Prefixes are tried longest first, so a repo below a
-// registered GitLab subgroup resolves to that subgroup's workspace, not a
-// same-named ancestor. A lookup failure only degrades down the credential
-// chain — forge surfaces are best-effort everywhere else too. The forge
-// must match: prefixes are globally unique, and a same-named workspace
-// on another forge must not lend its secrets or its installation.
+// WorkspaceFor returns the workspace on the given forge owning the slug's
+// prefix, nil when there is none. A lookup failure only degrades down
+// the credential chain — forge surfaces are best-effort everywhere else
+// too — so it is logged here and answered as "none"; a caller whose
+// response depends on the difference uses LookupWorkspace.
 func (f *Forges) WorkspaceFor(ctx context.Context, slug, forgeName string) *store.Workspace {
+	ws, err := f.LookupWorkspace(ctx, slug, forgeName)
+	if err != nil {
+		f.Log.Error("workspace lookup", "repo", slug, "forge", forgeName, "err", err)
+		return nil
+	}
+	return ws
+}
+
+// LookupWorkspace is WorkspaceFor with the store error kept: nil, nil when
+// no workspace on the forge owns the slug. Prefixes are tried longest
+// first, so a repo below a registered GitLab subgroup resolves to that
+// subgroup's workspace, not a same-named ancestor. Workspace names are
+// scoped per forge, so a same-named workspace on another forge is simply
+// not consulted and cannot lend its secrets or its installation.
+func (f *Forges) LookupWorkspace(ctx context.Context, slug, forgeName string) (*store.Workspace, error) {
 	for _, prefix := range SlugPrefixes(slug) {
-		ws, err := f.Store.WorkspaceByPrefix(ctx, prefix)
+		ws, err := f.Store.WorkspaceByPrefix(ctx, forgeName, prefix)
 		if errors.Is(err, store.ErrNotFound) {
 			continue
 		}
 		if err != nil {
-			f.Log.Error("workspace lookup", "repo", slug, "err", err)
-			return nil
+			return nil, err
 		}
-		if ws.Forge != forgeName {
-			return nil
-		}
-		return ws
+		return ws, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // installationForge returns the App-backed client when the workspace is
@@ -421,7 +430,7 @@ func (f *Forges) accessToken(ctx context.Context, g *grant, ws *store.Workspace)
 			token = t
 			return nil
 		}
-		fresh, err := tx.WorkspaceByPrefix(ctx, ws.Prefix)
+		fresh, err := tx.WorkspaceByPrefix(ctx, ws.Forge, ws.Prefix)
 		if err != nil {
 			return err
 		}

@@ -13,7 +13,7 @@ func TestRepoBranchFilterAndPagination(t *testing.T) {
 	doUpload(t, f, "secret-token", map[string]string{"commit": "main1", "branch": "main"}, testProfile)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "feat1", "branch": "feat"}, testProfile)
 
-	body := get(f, "/repos/acme/widgets?branch=feat").Body.String()
+	body := get(f, "/repos/bitbucket/acme/widgets?branch=feat").Body.String()
 	if !strings.Contains(body, "feat1") || strings.Contains(body, "main1") {
 		t.Errorf("branch filter failed: %s", body)
 	}
@@ -32,11 +32,11 @@ func TestRepoBranchFilterAndPagination(t *testing.T) {
 			"commit": "bulk" + strings.Repeat("x", i%3) + string(rune('a'+i%26)), "branch": "main",
 		}, testProfile)
 	}
-	page0 := get(f, "/repos/acme/widgets?branch=main").Body.String()
+	page0 := get(f, "/repos/bitbucket/acme/widgets?branch=main").Body.String()
 	if !strings.Contains(page0, "Older") {
 		t.Errorf("page 0 missing Older link")
 	}
-	page1 := get(f, "/repos/acme/widgets?branch=main&page=1").Body.String()
+	page1 := get(f, "/repos/bitbucket/acme/widgets?branch=main&page=1").Body.String()
 	if !strings.Contains(page1, "Newer") {
 		t.Errorf("page 1 missing Newer link")
 	}
@@ -68,7 +68,7 @@ func TestRepoPaginationPastRecentFetch(t *testing.T) {
 		}
 	}
 
-	body := get(f, fmt.Sprintf("/repos/acme/widgets?page=%d", page)).Body.String()
+	body := get(f, fmt.Sprintf("/repos/bitbucket/acme/widgets?page=%d", page)).Body.String()
 	if !strings.Contains(body, "Older") {
 		t.Errorf("page %d missing Older link with older uploads still to come", page)
 	}
@@ -79,14 +79,14 @@ func TestRepoTrendChart(t *testing.T) {
 
 	// One upload on the default branch: no chart section.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c1", "branch": "main"}, testProfile)
-	body := get(f, "/repos/acme/widgets").Body.String()
+	body := get(f, "/repos/bitbucket/acme/widgets").Body.String()
 	if strings.Contains(body, `class="trend"`) {
 		t.Errorf("trend rendered with a single upload")
 	}
 
 	// A PR upload must not count towards the two-point minimum.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "pr1", "branch": "main", "pr_id": "7"}, testProfile)
-	body = get(f, "/repos/acme/widgets").Body.String()
+	body = get(f, "/repos/bitbucket/acme/widgets").Body.String()
 	if strings.Contains(body, `class="trend"`) {
 		t.Errorf("trend rendered counting a PR upload")
 	}
@@ -94,7 +94,7 @@ func TestRepoTrendChart(t *testing.T) {
 	// Second branch upload, 100%: the chart appears, points link to uploads.
 	better := "mode: set\nexample.com/m/a.go:1.1,5.2 10 3\n"
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c2", "branch": "main"}, better)
-	body = get(f, "/repos/acme/widgets").Body.String()
+	body = get(f, "/repos/bitbucket/acme/widgets").Body.String()
 	if !strings.Contains(body, `class="trend"`) {
 		t.Fatalf("trend chart missing: %s", body)
 	}
@@ -114,14 +114,14 @@ func TestRepoTrendChart(t *testing.T) {
 		t.Fatal(err)
 	}
 	doUpload(t, f, "secret-token", map[string]string{"commit": "c3", "branch": "main"}, testProfile) // 80%, fails
-	body = get(f, "/repos/acme/widgets").Body.String()
+	body = get(f, "/repos/bitbucket/acme/widgets").Body.String()
 	if !strings.Contains(body, `class="pt fail"`) {
 		t.Errorf("gate-fail marker missing: %s", body)
 	}
 
 	// The branch filter drives the chart: feat has one upload, so no chart.
 	doUpload(t, f, "secret-token", map[string]string{"commit": "f1", "branch": "feat"}, testProfile)
-	body = get(f, "/repos/acme/widgets?branch=feat").Body.String()
+	body = get(f, "/repos/bitbucket/acme/widgets?branch=feat").Body.String()
 	if strings.Contains(body, `class="trend"`) {
 		t.Errorf("trend rendered for a branch with one upload")
 	}
@@ -132,7 +132,7 @@ func TestRepoPageShowsFilesView(t *testing.T) {
 	doUpload(t, f, "secret-token", map[string]string{"commit": "base1", "branch": "main"}, testProfileFull)
 	doUpload(t, f, "secret-token", map[string]string{"commit": "main2", "branch": "main"}, testProfile)
 
-	body := get(f, "/repos/acme/widgets").Body.String()
+	body := get(f, "/repos/bitbucket/acme/widgets").Body.String()
 	for _, want := range []string{
 		"Files on main",
 		`id="view-mode"`,

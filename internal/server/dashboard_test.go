@@ -17,7 +17,7 @@ func TestIndexListsWorkspaceRepos(t *testing.T) {
 
 	body := get(f, "/").Body.String()
 	for _, want := range []string{
-		`href="/repos/acme/widgets"`, `href="/repos/acme/gadgets"`,
+		`href="/repos/bitbucket/acme/widgets"`, `href="/repos/bitbucket/acme/gadgets"`,
 		`data-name="widgets"`, `data-name="gadgets"`,
 		`id="repo-search"`, `id="repo-sort"`,
 	} {
@@ -64,7 +64,7 @@ func TestDashboardNeedsAttention(t *testing.T) {
 		`<span class="mono">android</span> has no coverage gate`,
 		// repo-settings takes the slug as a trailing {slug...} wildcard, so the
 		// slash rides bare — a %2F-escaped single segment 404s on a live server.
-		`/repo-settings/acme/android`,
+		`/repo-settings/bitbucket/acme/android`,
 		`Failing<span class="n">1</span>`,
 		`Stale<span class="n">1</span>`,
 		// android has no gate; widgets has no gate and no report — both count.

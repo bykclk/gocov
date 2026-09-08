@@ -94,7 +94,7 @@ func newBBConnectFixture(t *testing.T) (*bbConnectFixture, *http.Cookie) {
 
 func (f *bbConnectFixture) workspace(t *testing.T) *store.Workspace {
 	t.Helper()
-	ws, err := f.store.WorkspaceByPrefix(t.Context(), "acme")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func (f *bbConnectFixture) upload(t *testing.T) uploadResponse {
 func TestBitbucketConnectFlow(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 
-	start := get(f.fixture, "/workspaces/acme/bitbucket/connect", sess)
+	start := get(f.fixture, "/workspaces/bitbucket/acme/connect", sess)
 	if start.Code != http.StatusFound {
 		t.Fatalf("connect start: status = %d", start.Code)
 	}
@@ -156,7 +156,7 @@ func TestBitbucketConnectFlow(t *testing.T) {
 	if cb.Code != http.StatusSeeOther {
 		t.Fatalf("callback: status = %d, body = %s", cb.Code, cb.Body)
 	}
-	if loc := cb.Header().Get("Location"); loc != "/workspaces/acme?connected=1" {
+	if loc := cb.Header().Get("Location"); loc != "/workspaces/bitbucket/acme?connected=1" {
 		t.Errorf("callback redirect = %q", loc)
 	}
 	ws := f.workspace(t)
@@ -165,7 +165,7 @@ func TestBitbucketConnectFlow(t *testing.T) {
 	}
 
 	// The settings page renders the connected identity (D8) and the notice.
-	body := get(f.fixture, "/workspaces/acme?connected=1", sess).Body.String()
+	body := get(f.fixture, "/workspaces/bitbucket/acme?connected=1", sess).Body.String()
 	if !strings.Contains(body, "@covbot") || !strings.Contains(body, "Disconnect") {
 		t.Error("settings page must show the connected account and disconnect")
 	}
@@ -180,7 +180,7 @@ func TestBitbucketConnectFlow(t *testing.T) {
 func TestBitbucketConnectFromOnboarding(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 
-	start := get(f.fixture, "/workspaces/acme/bitbucket/connect?from=onboarding", sess)
+	start := get(f.fixture, "/workspaces/bitbucket/acme/connect?from=onboarding", sess)
 	stateCk := cookieNamed(t, start, connectStateCookie)
 	state, _, from := splitConnectState(stateCk.Value)
 	if from != "onboarding" {
@@ -226,7 +226,7 @@ func TestBitbucketConnectRequiresFeature(t *testing.T) {
 	// No BitbucketConnect configured: the connect start does not exist,
 	// and a stray connect cookie on the sign-in callback changes nothing.
 	f, sess := newWorkspaceFixture(t, false)
-	if rec := get(f, "/workspaces/acme/bitbucket/connect", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/workspaces/bitbucket/acme/connect", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("connect without feature: status = %d, want 404", rec.Code)
 	}
 	stray := &http.Cookie{Name: connectStateCookie, Value: "s|acme"}
@@ -310,11 +310,11 @@ func TestBitbucketConnectIsOwnersOnly(t *testing.T) {
 	// is an owner's move; a member gets a 403 on both routes.
 	f, sess := newBBConnectFixture(t)
 	demote(t, f.fixture, "acme")
-	if rec := get(f.fixture, "/workspaces/acme/bitbucket/connect", sess); rec.Code != http.StatusForbidden {
+	if rec := get(f.fixture, "/workspaces/bitbucket/acme/connect", sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member connect: status = %d, want 403", rec.Code)
 	}
 	f.grant(t, "gocov-bot", "rt", false)
-	if rec := postForm(f.fixture, "/workspaces/acme/bitbucket/disconnect", url.Values{}, sess); rec.Code != http.StatusForbidden {
+	if rec := postForm(f.fixture, "/workspaces/bitbucket/acme/disconnect", url.Values{}, sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
 	}
 	if ws := f.workspace(t); ws.BitbucketGrantAccount != "gocov-bot" {
@@ -326,7 +326,7 @@ func TestBitbucketDisconnect(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 	f.grant(t, "covbot", "rt-0", false)
 
-	rec := postForm(f.fixture, "/workspaces/acme/bitbucket/disconnect", url.Values{}, sess)
+	rec := postForm(f.fixture, "/workspaces/bitbucket/acme/disconnect", url.Values{}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -339,13 +339,13 @@ func TestBitbucketDisconnect(t *testing.T) {
 func TestSettingsPageBitbucketStates(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 
-	body := get(f.fixture, "/workspaces/acme", sess).Body.String()
+	body := get(f.fixture, "/workspaces/bitbucket/acme", sess).Body.String()
 	if !strings.Contains(body, "Grant write access") || !strings.Contains(body, "under your own account") {
 		t.Error("unconnected settings must offer to grant write access and state the identity caveat (D8)")
 	}
 
 	f.grant(t, "covbot", "rt-0", true)
-	body = get(f.fixture, "/workspaces/acme", sess).Body.String()
+	body = get(f.fixture, "/workspaces/bitbucket/acme", sess).Body.String()
 	if !strings.Contains(body, "Reconnect needed") || !strings.Contains(body, "Grant write access again") {
 		t.Error("broken grant must surface the reconnect state")
 	}
@@ -355,13 +355,13 @@ func TestSetupPageRecommendsConnect(t *testing.T) {
 	f, sess := newBBConnectFixture(t)
 
 	body := get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
-	if !strings.Contains(body, "/workspaces/acme/bitbucket/connect") {
+	if !strings.Contains(body, "/workspaces/bitbucket/acme/connect") {
 		t.Error("ready state must offer the connect grant while not connected")
 	}
 
 	f.grant(t, "covbot", "rt-0", false)
 	body = get(f.fixture, "/onboarding?ws=acme", sess).Body.String()
-	if strings.Contains(body, "/workspaces/acme/bitbucket/connect") {
+	if strings.Contains(body, "/workspaces/bitbucket/acme/connect") {
 		t.Error("ready state must drop the connect grant once connected")
 	}
 	if !strings.Contains(body, "@covbot") {

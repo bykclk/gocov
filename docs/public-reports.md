@@ -1,7 +1,7 @@
 # Public report pages
 
 For a repository its forge reports as **public**, gocov serves the report pages read-only without sign-in: the repo
-overview (`/repos/{workspace}/{repo}`), each upload's report, the per-file source view and the raw profile download.
+overview (`/repos/{forge}/{workspace}/{repo}`), each upload's report, the per-file source view and the raw profile download.
 Anyone who lands there from a badge, a PR comment's *Full report* link or a build status sees the same coverage the
 world can already read the code of — settings pages stay members-only, tokens and every mutating action owner-only.
 
@@ -42,7 +42,7 @@ The badge snippet the repo page and repo settings hand out links the SVG to the 
 reader can click through from the number to the report behind it:
 
 ```markdown
-[![coverage](https://app.gocov.dev/badge/myworkspace/myrepo.svg)](https://app.gocov.dev/repos/myworkspace/myrepo?ref=badge)
+[![coverage](https://app.gocov.dev/badge/github/myworkspace/myrepo.svg)](https://app.gocov.dev/repos/github/myworkspace/myrepo?ref=badge)
 ```
 
 Self-hosted instances serve the same pages from their own host, and the operator can turn public report pages off

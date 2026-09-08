@@ -50,3 +50,47 @@ func TestUsersNeverAliasForgeWorkspaces(t *testing.T) {
 		t.Fatalf("re-login snapshot aliased: %v", final.ForgeWorkspaces)
 	}
 }
+
+// Names are scoped per forge, as in postgres: the same slug or prefix on
+// another forge is a different row, and a workspace delete only cascades
+// over its own forge's repos.
+func TestNamesAreScopedPerForge(t *testing.T) {
+	ctx := context.Background()
+	s := New()
+	bb := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "bb-ws", DefaultBranch: "main"}
+	gh := &store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-ws", DefaultBranch: "main"}
+	for _, ws := range []*store.Workspace{bb, gh} {
+		if err := s.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CreateWorkspace(ctx, &store.Workspace{Forge: "github", Prefix: "acme", Token: "other", DefaultBranch: "main"}); err == nil {
+		t.Error("duplicate prefix on the same forge must fail")
+	}
+	bbRepo := &store.Repo{Forge: "bitbucket", Slug: "acme/widgets", Token: "bb-repo", DefaultBranch: "main"}
+	ghRepo := &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "gh-repo", DefaultBranch: "main"}
+	for _, r := range []*store.Repo{bbRepo, ghRepo} {
+		if err := s.CreateRepo(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.CreateRepo(ctx, &store.Repo{Forge: "github", Slug: "acme/widgets", Token: "other", DefaultBranch: "main"}); err == nil {
+		t.Error("duplicate slug on the same forge must fail")
+	}
+	if got, err := s.RepoBySlug(ctx, "github", "acme/widgets"); err != nil || got.ID != ghRepo.ID {
+		t.Errorf("RepoBySlug(github) = %+v, %v", got, err)
+	}
+	if got, err := s.WorkspaceByPrefix(ctx, "bitbucket", "acme"); err != nil || got.ID != bb.ID {
+		t.Errorf("WorkspaceByPrefix(bitbucket) = %+v, %v", got, err)
+	}
+
+	if err := s.DeleteWorkspace(ctx, gh.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RepoByID(ctx, ghRepo.ID); err == nil {
+		t.Error("the github repo survived its workspace")
+	}
+	if _, err := s.RepoByID(ctx, bbRepo.ID); err != nil {
+		t.Errorf("the bitbucket namesake was cascaded away: %v", err)
+	}
+}

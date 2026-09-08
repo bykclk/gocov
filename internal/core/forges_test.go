@@ -62,7 +62,7 @@ func connectedWorkspace(t *testing.T, st *storemem.Store, prefix string) *store.
 	if err := st.SetWorkspaceBitbucketGrant(ctx, ws.ID, "covbot", "rt-0", false); err != nil {
 		t.Fatal(err)
 	}
-	fresh, err := st.WorkspaceByPrefix(ctx, prefix)
+	fresh, err := st.WorkspaceByPrefix(ctx, "bitbucket", prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestRotatedRefreshTokenIsPersisted(t *testing.T) {
 	if fg := f.Connected(t.Context(), ws, "bitbucket"); fg == nil {
 		t.Fatal("no forge client")
 	}
-	fresh, err := st.WorkspaceByPrefix(t.Context(), "acme")
+	fresh, err := st.WorkspaceByPrefix(t.Context(), "bitbucket", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestRevokedGrantIsMarkedBroken(t *testing.T) {
 	if fg := f.Connected(ctx, ws, "bitbucket"); fg != nil {
 		t.Error("a revoked grant handed out a client")
 	}
-	fresh, err := st.WorkspaceByPrefix(ctx, "acme")
+	fresh, err := st.WorkspaceByPrefix(ctx, "bitbucket", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}

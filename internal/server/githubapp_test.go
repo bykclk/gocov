@@ -138,7 +138,7 @@ func signInVia(t *testing.T, f *fixture, forgeName string) *http.Cookie {
 
 func (f *githubAppFixture) reloadWorkspace(t *testing.T, prefix string) *store.Workspace {
 	t.Helper()
-	ws, err := f.store.WorkspaceByPrefix(t.Context(), prefix)
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "github", prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestGitHubSetupConnectsWorkspace(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/workspaces/acme?connected=1" {
+	if loc := rec.Header().Get("Location"); loc != "/workspaces/github/acme?connected=1" {
 		t.Errorf("redirect = %q", loc)
 	}
 	ws := f.reloadWorkspace(t, "acme")
@@ -170,7 +170,7 @@ func TestGitHubSetupConnectsWorkspace(t *testing.T) {
 	}
 
 	// The settings page renders the connected state and the notice.
-	page := get(f.fixture, "/workspaces/acme?connected=1", sess)
+	page := get(f.fixture, "/workspaces/github/acme?connected=1", sess)
 	body := page.Body.String()
 	if !strings.Contains(body, "connected") || !strings.Contains(body, "gocov[bot]") {
 		t.Error("settings page must show the connected GitHub App state")
@@ -236,7 +236,7 @@ func TestGitHubSetupRejectsForeignInstallation(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "github.com/organizations/strangers/settings/oauth_application_policy") {
 		t.Errorf("claim-denied page missing the org OAuth-policy link:\n%s", rec.Body)
 	}
-	if _, err := f.store.WorkspaceByPrefix(t.Context(), "strangers"); err == nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "strangers"); err == nil {
 		t.Error("foreign claim must not register a workspace")
 	}
 }
@@ -288,7 +288,7 @@ func TestGitHubSetupClaimsWorkspaceHosted(t *testing.T) {
 		t.Errorf("claimed workspace: installation = %d, forge = %q", ws.GitHubInstallationID, ws.Forge)
 	}
 	// The registering user must be a member (RegisterWorkspace semantics).
-	if rec := get(f.fixture, "/workspaces/janedev", sess); rec.Code != http.StatusOK {
+	if rec := get(f.fixture, "/workspaces/github/janedev", sess); rec.Code != http.StatusOK {
 		t.Errorf("claimer cannot open the settings page: status = %d", rec.Code)
 	}
 }
@@ -308,12 +308,36 @@ func TestGitHubSetupClaimPrivateMode(t *testing.T) {
 	if loc := rec.Header().Get("Location"); loc != "/onboarding?ws=janedev" {
 		t.Errorf("redirect = %q, want the workspace-ready state", loc)
 	}
-	ws, err := f.store.WorkspaceByPrefix(t.Context(), "janedev")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "github", "janedev")
 	if err != nil {
 		t.Fatalf("private-mode install must register the workspace: %v", err)
 	}
 	if ws.GitHubInstallationID != 7 || ws.Forge != "github" {
 		t.Errorf("claimed workspace: installation = %d, forge = %q", ws.GitHubInstallationID, ws.Forge)
+	}
+}
+
+func TestGitHubSetupClaimBesideAnotherForgesNamesake(t *testing.T) {
+	// Names are scoped per forge: installing on the GitHub org "acme" next
+	// to a registered Bitbucket workspace "acme" creates github/acme and
+	// leaves the Bitbucket tenant alone — the old global namespace turned
+	// the install away with a 409.
+	f, sess := newGitHubAppFixture(t, true, false)
+	bb := &store.Workspace{Forge: "bitbucket", Prefix: "acme", Token: "bb-secret", DefaultBranch: "main"}
+	if err := f.store.CreateWorkspace(t.Context(), bb); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := get(f.fixture, "/github/setup?installation_id=42", sess)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
+	}
+	gh := f.reloadWorkspace(t, "acme")
+	if gh.ID == bb.ID || gh.GitHubInstallationID != 42 {
+		t.Errorf("github acme = %+v, want a new workspace linked to installation 42", gh)
+	}
+	if got, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "acme"); err != nil || got.Token != "bb-secret" || got.GitHubInstallationID != 0 {
+		t.Errorf("bitbucket acme changed: %+v, %v", got, err)
 	}
 }
 
@@ -327,7 +351,7 @@ func TestGitHubSetupClaimDeniedNonMember(t *testing.T) {
 	if rec := get(f.fixture, "/github/setup?installation_id=7", sess); rec.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want 403", rec.Code)
 	}
-	if _, err := f.store.WorkspaceByPrefix(t.Context(), "stranger"); err == nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "stranger"); err == nil {
 		t.Error("an unvouched account must not be registered")
 	}
 }
@@ -349,7 +373,7 @@ func TestGitHubSetupIsOwnersOnly(t *testing.T) {
 	if ws := f.reloadWorkspace(t, "acme"); ws.GitHubInstallationID != 0 {
 		t.Errorf("installation linked by a member: %d", ws.GitHubInstallationID)
 	}
-	if rec := postForm(f.fixture, "/workspaces/acme/github/disconnect", url.Values{}, sess); rec.Code != http.StatusForbidden {
+	if rec := postForm(f.fixture, "/workspaces/github/acme/disconnect", url.Values{}, sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member disconnect: status = %d, want 403", rec.Code)
 	}
 }
@@ -369,7 +393,7 @@ func TestGitHubSetupClaimNeedsAnOwnerOnTheForge(t *testing.T) {
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "Owners only") {
 		t.Fatalf("member claiming via install: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if _, err := f.store.WorkspaceByPrefix(t.Context(), "janedev"); err == nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "github", "janedev"); err == nil {
 		t.Error("a member's install must not register the workspace")
 	}
 }
@@ -378,7 +402,7 @@ func TestGitHubDisconnect(t *testing.T) {
 	f, sess := newGitHubAppFixture(t, false, true)
 	f.connectWorkspace(t, 42)
 
-	rec := postForm(f.fixture, "/workspaces/acme/github/disconnect", url.Values{}, sess)
+	rec := postForm(f.fixture, "/workspaces/github/acme/disconnect", url.Values{}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d", rec.Code)
 	}
@@ -496,7 +520,7 @@ func TestUploadWorkspaceTokenUsesInstallation(t *testing.T) {
 	if resp.BuildStatus != "posted" {
 		t.Errorf("build status = %q, want posted through the installation", resp.BuildStatus)
 	}
-	repo, err := f.store.RepoBySlug(t.Context(), "acme/newrepo")
+	repo, err := f.store.RepoBySlug(t.Context(), "github", "acme/newrepo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -514,7 +538,7 @@ func TestSettingsPageBrokenState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	body := get(f.fixture, "/workspaces/acme", sess).Body.String()
+	body := get(f.fixture, "/workspaces/github/acme", sess).Body.String()
 	if !strings.Contains(body, "Reconnect needed") {
 		t.Error("settings page must surface the broken connection")
 	}

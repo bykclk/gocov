@@ -116,7 +116,7 @@ func TestRegistrationWorksInPrivateMode(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("POST /register: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	if _, err := f.store.WorkspaceByPrefix(t.Context(), "personal"); err != nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "personal"); err != nil {
 		t.Fatalf("workspace not registered: %v", err)
 	}
 	// The forge-list check still gates: a workspace the identity does not list.
@@ -150,8 +150,8 @@ func TestHostedReauthHonorsPendingInstall(t *testing.T) {
 func TestRegisterPageStates(t *testing.T) {
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
 	ctx := t.Context()
-	// "personal" is free; "acme" is taken by a GitHub workspace of the same
-	// name, so it must render unavailable.
+	// "personal" is free, and so is "acme": the GitHub workspace of that
+	// name is another forge's tenant and says nothing about Bitbucket's.
 	if err := f.store.CreateWorkspace(ctx,
 		&store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
@@ -166,9 +166,8 @@ func TestRegisterPageStates(t *testing.T) {
 	if !strings.Contains(body, "personal") || !strings.Contains(body, "Not set up") {
 		t.Errorf("free workspace not offered:\n%s", body)
 	}
-	// The collision row must name the forge holding the prefix.
-	if !strings.Contains(body, "Name registered under GitHub") {
-		t.Errorf("cross-forge collision not surfaced:\n%s", body)
+	if strings.Contains(body, "registered under") || strings.Count(body, "Create the workspace") != 2 {
+		t.Errorf("a same-named workspace on another forge must not block the name:\n%s", body)
 	}
 	// "Sign in again" re-runs OAuth to refresh the snapshot. It must not
 	// point at /logout, which is POST-only and 404s on a link's GET.
@@ -190,7 +189,7 @@ func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
 	}
 
 	ctx := t.Context()
-	ws, err := f.store.WorkspaceByPrefix(ctx, "personal")
+	ws, err := f.store.WorkspaceByPrefix(ctx, "bitbucket", "personal")
 	if err != nil {
 		t.Fatalf("workspace not created: %v", err)
 	}
@@ -198,7 +197,7 @@ func TestRegisterCreatesWorkspaceAndShowsTokenOnce(t *testing.T) {
 		t.Errorf("workspace = %+v", ws)
 	}
 	// The onboarding page shows the token in the CI snippet (D6).
-	setup := get(f, "/workspaces/personal/setup", sess)
+	setup := get(f, "/workspaces/bitbucket/personal/setup", sess)
 	if setup.Code != http.StatusOK || !strings.Contains(setup.Body.String(), ws.Token) {
 		t.Errorf("setup page (status %d) does not show the upload token:\n%s", setup.Code, setup.Body)
 	}
@@ -238,21 +237,31 @@ func TestRegisterRejectsForeignPrefix(t *testing.T) {
 			t.Errorf("register %q: status = %d, want 403", prefix, rec.Code)
 		}
 	}
-	if _, err := f.store.WorkspaceByPrefix(t.Context(), "evilcorp"); err == nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "evilcorp"); err == nil {
 		t.Error("rejected registration created a workspace")
 	}
 }
 
-func TestRegisterCrossForgeCollisionConflicts(t *testing.T) {
+func TestRegisterSameNameOnAnotherForgeIsItsOwnWorkspace(t *testing.T) {
+	// Names are scoped per forge: the GitHub org "acme" and the Bitbucket
+	// workspace "acme" are two tenants, so the Bitbucket user creates
+	// theirs beside the GitHub one rather than being turned away.
 	f := newHostedFixture(t, &fakeProvider{identity: memberIdentity()})
-	if err := f.store.CreateWorkspace(t.Context(),
-		&store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}); err != nil {
+	gh := &store.Workspace{Forge: "github", Prefix: "acme", Token: "gh-tok", DefaultBranch: "main"}
+	if err := f.store.CreateWorkspace(t.Context(), gh); err != nil {
 		t.Fatal(err)
 	}
 	sess := hostedSignIn(t, f, "/", "/onboarding")
 
-	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusConflict {
-		t.Errorf("cross-forge claim: status = %d, want 409", rec.Code)
+	if rec := postRegister(f, "acme", sess); rec.Code != http.StatusSeeOther {
+		t.Fatalf("claim beside another forge's namesake: status = %d, want 303", rec.Code)
+	}
+	bb, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "acme")
+	if err != nil {
+		t.Fatalf("bitbucket acme not registered: %v", err)
+	}
+	if bb.ID == gh.ID || bb.Token == gh.Token {
+		t.Error("the claim joined the GitHub workspace instead of creating a Bitbucket one")
 	}
 }
 
@@ -305,7 +314,7 @@ func TestRegisterNeedsAnOwnerOnTheForge(t *testing.T) {
 	if rec := postRegister(f, "personal", sess); rec.Code != http.StatusForbidden {
 		t.Errorf("member creating a workspace: status = %d, want 403", rec.Code)
 	}
-	if _, err := f.store.WorkspaceByPrefix(t.Context(), "personal"); err == nil {
+	if _, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "personal"); err == nil {
 		t.Error("refused registration created a workspace")
 	}
 }

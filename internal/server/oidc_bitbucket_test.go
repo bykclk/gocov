@@ -144,7 +144,7 @@ func TestBitbucketOIDCRegistersRepo(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
-	repo, err := f.store.RepoBySlug(t.Context(), "acme/gadgets")
+	repo, err := f.store.RepoBySlug(t.Context(), "bitbucket", "acme/gadgets")
 	if err != nil {
 		t.Fatalf("repo not registered: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestBitbucketOIDCMismatchRegistersNothing(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body)
 	}
 	assertErrorContains(t, rec, "oidc_repo_mismatch")
-	if _, err := f.store.RepoBySlug(t.Context(), "acme/gadgets"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.store.RepoBySlug(t.Context(), "bitbucket", "acme/gadgets"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("repo registered despite the UUID mismatch (err = %v)", err)
 	}
 }

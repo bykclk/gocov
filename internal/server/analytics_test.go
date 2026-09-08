@@ -23,7 +23,7 @@ func TestPostHogMetaTag(t *testing.T) {
 	f.srv.posthog = PostHog{Key: "phc_abc", Host: "https://eu.i.posthog.com"}
 
 	// Signed out (a public report page): key and host, no user.
-	body := get(f, "/repos/acme/widgets").Body.String()
+	body := get(f, "/repos/bitbucket/acme/widgets").Body.String()
 	want := `<meta name="gocov-posthog" content="phc_abc" data-host="https://eu.i.posthog.com">`
 	if !strings.Contains(body, want) {
 		t.Errorf("signed-out page missing %s:\n%s", want, body)
@@ -77,7 +77,7 @@ func TestOnboardingDeclaresProductEvents(t *testing.T) {
 			t.Errorf("onboarding ready face misses %s:\n%s", want, body)
 		}
 	}
-	body = get(f, "/workspaces/acme/setup", sess).Body.String()
+	body = get(f, "/workspaces/bitbucket/acme/setup", sess).Body.String()
 	for _, want := range []string{
 		`data-ph-step="wire_ci" data-ph-face="ci"`,
 		`data-ph-click="reveal_token_clicked"`, `data-ph-click="copy_token_clicked"`,
@@ -87,7 +87,7 @@ func TestOnboardingDeclaresProductEvents(t *testing.T) {
 			t.Errorf("CI step misses %s:\n%s", want, body)
 		}
 	}
-	if body := get(f, "/workspaces/acme/setup?awaiting=1", sess).Body.String(); !strings.Contains(body,
+	if body := get(f, "/workspaces/bitbucket/acme/setup?awaiting=1", sess).Body.String(); !strings.Contains(body,
 		`data-ph-step="first_upload" data-ph-face="awaiting"`) {
 		t.Errorf("waiting face misses its step context:\n%s", body)
 	}
@@ -95,7 +95,7 @@ func TestOnboardingDeclaresProductEvents(t *testing.T) {
 	// The poll redirects to the setup page with ?landed=1 when the first
 	// upload arrives; only that load reports first_upload_received, while
 	// every load in that state reports the received face.
-	ws, err := f.store.WorkspaceByPrefix(t.Context(), "acme")
+	ws, err := f.store.WorkspaceByPrefix(t.Context(), "bitbucket", "acme")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +103,10 @@ func TestOnboardingDeclaresProductEvents(t *testing.T) {
 		"repo": "acme/newrepo", "commit": "c1", "branch": "main"}, testProfile); rec.Code != http.StatusCreated {
 		t.Fatalf("upload: status = %d: %s", rec.Code, rec.Body)
 	}
-	if loc := get(f, "/workspaces/acme/setup/status", sess).Header().Get("HX-Redirect"); loc != "/workspaces/acme/setup?landed=1" {
+	if loc := get(f, "/workspaces/bitbucket/acme/setup/status", sess).Header().Get("HX-Redirect"); loc != "/workspaces/bitbucket/acme/setup?landed=1" {
 		t.Errorf("status poll redirected to %q, want the setup page marked landed=1", loc)
 	}
-	landed := get(f, "/workspaces/acme/setup?landed=1", sess).Body.String()
+	landed := get(f, "/workspaces/bitbucket/acme/setup?landed=1", sess).Body.String()
 	for _, want := range []string{
 		`data-ph-step="first_upload" data-ph-face="received"`,
 		`data-ph-view="first_upload_received"`, `data-ph-click="open_dashboard_clicked"`,
@@ -115,7 +115,7 @@ func TestOnboardingDeclaresProductEvents(t *testing.T) {
 			t.Errorf("landed page misses %s:\n%s", want, landed)
 		}
 	}
-	if body := get(f, "/workspaces/acme/setup", sess).Body.String(); strings.Contains(body, "first_upload_received") ||
+	if body := get(f, "/workspaces/bitbucket/acme/setup", sess).Body.String(); strings.Contains(body, "first_upload_received") ||
 		!strings.Contains(body, `data-ph-face="received"`) {
 		t.Errorf("a plain reload of the received state must keep the face but not re-report the landing:\n%s", body)
 	}

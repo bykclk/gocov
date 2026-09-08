@@ -10,7 +10,7 @@
     of them (or to <code>GOCOV_ALLOWED_WORKSPACES</code>).</p>
     {{if .Workspaces}}
     <p class="muted small login-workspaces">Tracked workspaces:
-    {{range $i, $ws := .Workspaces}}{{if $i}}, {{end}}<code>{{$ws}}</code>{{end}}</p>
+    {{range $i, $ws := .Workspaces}}{{if $i}}, {{end}}<code>{{$ws.Name}}</code>{{with $ws.Forge}} on {{.}}{{end}}{{end}}</p>
     {{end}}
     {{else if .Failed}}
     <p class="notice fail">Sign-in did not complete. Please try again.</p>

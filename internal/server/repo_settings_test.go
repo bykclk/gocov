@@ -13,7 +13,7 @@ import (
 func TestRepoSettingsAccess(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true) // workspace acme + repo acme/widgets, member signed in
 
-	rec := get(f, "/repo-settings/acme/widgets", sess)
+	rec := get(f, "/repo-settings/bitbucket/acme/widgets", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member settings page: status = %d", rec.Code)
 	}
@@ -36,11 +36,11 @@ func TestRepoSettingsAccess(t *testing.T) {
 		&store.Repo{Forge: "bitbucket", Slug: "beta/thing", Token: "x", DefaultBranch: "main"}); err != nil {
 		t.Fatal(err)
 	}
-	if rec := get(f, "/repo-settings/beta/thing", sess); rec.Code != http.StatusNotFound {
+	if rec := get(f, "/repo-settings/bitbucket/beta/thing", sess); rec.Code != http.StatusNotFound {
 		t.Errorf("non-member settings page: status = %d, want 404", rec.Code)
 	}
 	// Anonymous is redirected to login by the auth middleware.
-	if rec := get(f, "/repo-settings/acme/widgets"); rec.Code != http.StatusFound {
+	if rec := get(f, "/repo-settings/bitbucket/acme/widgets"); rec.Code != http.StatusFound {
 		t.Errorf("anonymous settings page: status = %d, want login redirect", rec.Code)
 	}
 }
@@ -50,7 +50,7 @@ func TestMemberRepoSettingsAreReadOnly(t *testing.T) {
 	f, sess := newMemberFixture(t, true)
 	ctx := t.Context()
 
-	rec := get(f, "/repo-settings/acme/widgets", sess)
+	rec := get(f, "/repo-settings/bitbucket/acme/widgets", sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("member settings page: status = %d", rec.Code)
 	}
@@ -58,26 +58,26 @@ func TestMemberRepoSettingsAreReadOnly(t *testing.T) {
 	if strings.Contains(body, "secret-token") {
 		t.Error("member page carries the upload token")
 	}
-	for _, control := range []string{"Rotate token", "Remove this repository", `action="/repo-settings/save/acme/widgets"`} {
+	for _, control := range []string{"Rotate token", "Remove this repository", `action="/repo-settings/save/bitbucket/acme/widgets"`} {
 		if strings.Contains(body, control) {
 			t.Errorf("member page renders the owner control %q", control)
 		}
 	}
 	// What a member came for is still there: the values, and the badge.
-	if !strings.Contains(body, "read-only") || !strings.Contains(body, "/badge/acme/widgets.svg") {
+	if !strings.Contains(body, "read-only") || !strings.Contains(body, "/badge/bitbucket/acme/widgets.svg") {
 		t.Errorf("member page misses the read-only note or the badge:\n%s", body)
 	}
 
 	for _, path := range []string{
-		"/repo-settings/save/acme/widgets",
-		"/repo-settings/rotate-token/acme/widgets",
-		"/repo-settings/delete/acme/widgets",
+		"/repo-settings/save/bitbucket/acme/widgets",
+		"/repo-settings/rotate-token/bitbucket/acme/widgets",
+		"/repo-settings/delete/bitbucket/acme/widgets",
 	} {
 		if rec := postForm(f, path, url.Values{"default_branch": {"develop"}}, sess); rec.Code != http.StatusForbidden {
 			t.Errorf("member POST %s: status = %d, want 403", path, rec.Code)
 		}
 	}
-	repo, err := f.store.RepoBySlug(ctx, "acme/widgets")
+	repo, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets")
 	if err != nil || repo.Token != "secret-token" || repo.DefaultBranch != "main" {
 		t.Errorf("a member's refused POSTs changed the repo: %+v, %v", repo, err)
 	}
@@ -88,13 +88,13 @@ func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	ctx := t.Context()
 
 	// Save base branch + a min-coverage gate.
-	rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
+	rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{
 		"default_branch": {"develop"}, "min_coverage": {"85"},
 	}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: status = %d, want 303", rec.Code)
 	}
-	repo, err := f.store.RepoBySlug(ctx, "acme/widgets")
+	repo, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,18 +106,18 @@ func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	}
 
 	// A bad gate value is rejected.
-	if rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
+	if rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{
 		"default_branch": {"main"}, "min_coverage": {"250"},
 	}, sess); rec.Code != http.StatusBadRequest {
 		t.Errorf("bad gate: status = %d, want 400", rec.Code)
 	}
 
 	// Rotate the token: a new one is issued and shown once.
-	rec = postForm(f, "/repo-settings/rotate-token/acme/widgets", url.Values{}, sess)
+	rec = postForm(f, "/repo-settings/rotate-token/bitbucket/acme/widgets", url.Values{}, sess)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rotate: status = %d", rec.Code)
 	}
-	repo, _ = f.store.RepoBySlug(ctx, "acme/widgets")
+	repo, _ = f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets")
 	if repo.Token == "secret-token" {
 		t.Error("token was not rotated")
 	}
@@ -126,11 +126,11 @@ func TestRepoSettingsSaveRotateDelete(t *testing.T) {
 	}
 
 	// Delete removes the repo and redirects to the workspace.
-	rec = postForm(f, "/repo-settings/delete/acme/widgets", url.Values{}, sess)
+	rec = postForm(f, "/repo-settings/delete/bitbucket/acme/widgets", url.Values{}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("delete: status = %d, want 303", rec.Code)
 	}
-	if _, err := f.store.RepoBySlug(ctx, "acme/widgets"); err == nil {
+	if _, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets"); err == nil {
 		t.Error("repo still present after delete")
 	}
 }
@@ -141,14 +141,14 @@ func TestRepoSettingsSaveIgnorePaths(t *testing.T) {
 	f, sess := newWorkspaceFixture(t, true)
 	ctx := t.Context()
 
-	rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
+	rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{
 		"default_branch": {"main"},
 		"ignore_paths":   {"cmd/preview/**\r\n\r\n# generated\r\n*_mock.go\r\n"},
 	}, sess)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("save: status = %d, body = %s", rec.Code, rec.Body)
 	}
-	repo, err := f.store.RepoBySlug(ctx, "acme/widgets")
+	repo, err := f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,28 +156,28 @@ func TestRepoSettingsSaveIgnorePaths(t *testing.T) {
 		t.Errorf("ignore paths = %q, want %q", repo.IgnorePaths, want)
 	}
 
-	page := get(f, "/repo-settings/acme/widgets", sess)
+	page := get(f, "/repo-settings/bitbucket/acme/widgets", sess)
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "cmd/preview/**\n*_mock.go") {
 		t.Errorf("settings page (%d) does not show the saved patterns", page.Code)
 	}
 
 	// An uncompilable pattern is refused and nothing changes.
-	if rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
+	if rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{
 		"default_branch": {"main"}, "ignore_paths": {"src/["},
 	}, sess); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "ignore pattern") {
 		t.Errorf("bad pattern: status = %d", rec.Code)
 	}
-	if repo, _ = f.store.RepoBySlug(ctx, "acme/widgets"); len(repo.IgnorePaths) != 2 {
+	if repo, _ = f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets"); len(repo.IgnorePaths) != 2 {
 		t.Errorf("bad save changed the patterns: %q", repo.IgnorePaths)
 	}
 
 	// Clearing the field clears the patterns.
-	if rec := postForm(f, "/repo-settings/save/acme/widgets", url.Values{
+	if rec := postForm(f, "/repo-settings/save/bitbucket/acme/widgets", url.Values{
 		"default_branch": {"main"}, "ignore_paths": {""},
 	}, sess); rec.Code != http.StatusSeeOther {
 		t.Errorf("clear: status = %d", rec.Code)
 	}
-	if repo, _ = f.store.RepoBySlug(ctx, "acme/widgets"); repo.IgnorePaths != nil {
+	if repo, _ = f.store.RepoBySlug(ctx, "bitbucket", "acme/widgets"); repo.IgnorePaths != nil {
 		t.Errorf("patterns not cleared: %q", repo.IgnorePaths)
 	}
 }

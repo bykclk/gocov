@@ -22,16 +22,10 @@ type registerRow struct {
 	//   "registered" registered here but membership hasn't synced yet
 	//                (the stored list is newer than the last login sync;
 	//                fixed by signing in again)
-	//   "taken"      the prefix is registered under another forge; slugs
-	//                are forge-agnostic, so the name is unavailable
 	//   "unowned"    free, but the forge lists the user as a member, not
 	//                an admin — creating a workspace is an owner's move
 	//   "available"  free to register
 	State string
-	// TakenBy names the other forge holding the prefix when State is
-	// "taken" — with three forges the collision is no longer exotic, so
-	// the row says exactly who has the name.
-	TakenBy string
 }
 
 // registerUser gates both registration routes: hosted mode only (a private
@@ -71,7 +65,7 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 	rows := make([]registerRow, 0, len(prefixes))
 	for _, prefix := range prefixes {
 		row := registerRow{Prefix: prefix, State: "available"}
-		ws, err := s.store.WorkspaceByPrefix(r.Context(), prefix)
+		_, err := s.store.WorkspaceByPrefix(r.Context(), u.Forge, prefix)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			if forgeRole(u, prefix) != store.RoleOwner {
@@ -79,9 +73,6 @@ func (s *Server) registerRows(r *http.Request, u *store.User) ([]registerRow, er
 			}
 		case err != nil:
 			return nil, err
-		case ws.Forge != u.Forge:
-			row.State = "taken"
-			row.TakenBy = providerLabel(ws.Forge)
 		case member[prefix]:
 			row.State = "member"
 		default:
@@ -136,17 +127,10 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("workspace registered", "prefix", created.Prefix, "forge", created.Forge, "user", u.DisplayName)
 		// Land on the wizard's "workspace ready" state (D6): the reporting
 		// capability card, then Continue to the CI step.
-		http.Redirect(w, r, onboardingReadyURL(created.Prefix), http.StatusSeeOther)
+		http.Redirect(w, r, onboardingReadyURL(created), http.StatusSeeOther)
 		return
 	}
 
-	if existing.Forge != u.Forge {
-		// Slugs are forge-agnostic ("prefix/repo" is the only key), so the
-		// same name on two forges cannot coexist as separate tenants.
-		http.Error(w, "this workspace name is already registered under "+providerLabel(existing.Forge)+
-			" on this server, so it is unavailable here", http.StatusConflict)
-		return
-	}
 	// Someone else registered it first — a non-event by construction (D2):
 	// the forge says the user belongs, so membership is theirs; grant it
 	// now instead of making them wait for the next login sync.
@@ -161,14 +145,15 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 // user as a member of the prefix but not an admin of it.
 var errNotOwner = errors.New("not an owner of the workspace on the forge")
 
-// claimWorkspace registers prefix for the user, unless a workspace with
-// that prefix already exists (also when a concurrent claim wins the
-// create race) — then it is returned as existing instead. Creating one
+// claimWorkspace registers prefix on the user's forge for the user,
+// unless a workspace with that prefix already exists there (also when a
+// concurrent claim wins the create race) — then it is returned as
+// existing instead. Creating one
 // takes an owner's role on the forge: it makes a tenant and mints its
 // upload token, both owner-only from then on. Joining an existing one is
 // open to any member.
 func (s *Server) claimWorkspace(r *http.Request, u *store.User, prefix string) (created, existing *store.Workspace, err error) {
-	existing, err = s.store.WorkspaceByPrefix(r.Context(), prefix)
+	existing, err = s.store.WorkspaceByPrefix(r.Context(), u.Forge, prefix)
 	if err == nil {
 		return nil, existing, nil
 	}
@@ -189,7 +174,7 @@ func (s *Server) claimWorkspace(r *http.Request, u *store.User, prefix string) (
 		DefaultBranch: "main",
 	}
 	if err := s.store.RegisterWorkspace(r.Context(), ws, u.ID); err != nil {
-		if existing, lookupErr := s.store.WorkspaceByPrefix(r.Context(), prefix); lookupErr == nil {
+		if existing, lookupErr := s.store.WorkspaceByPrefix(r.Context(), u.Forge, prefix); lookupErr == nil {
 			return nil, existing, nil
 		}
 		return nil, nil, err

@@ -5,6 +5,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/gocov/gocov/internal/diffcov"
@@ -30,6 +31,12 @@ type Gate struct {
 // Configured reports whether any gate rule is set.
 func (g Gate) Configured() bool {
 	return g.MinCoverage != nil || g.MinDiffCoverage != nil || g.MaxCoverageDrop != nil
+}
+
+// RepoRef names a repo the way its URLs do: forge, then slug.
+type RepoRef struct {
+	Forge string
+	Slug  string
 }
 
 // Workspace groups repos under a slug prefix ("workspace" in
@@ -212,6 +219,13 @@ type User struct {
 	LastLoginAt          time.Time
 }
 
+// Owns reports whether the repo belongs to this workspace: same forge,
+// slug below the prefix. Repos carry no workspace id; this is the tie
+// (the M2 convention), and DeleteWorkspace cascades by the same rule.
+func (w *Workspace) Owns(r *Repo) bool {
+	return r.Forge == w.Forge && strings.HasPrefix(r.Slug, w.Prefix+"/")
+}
+
 // Role is what a membership lets its holder do in a workspace. It mirrors
 // the forge's own role for the account and is re-synced at every sign-in.
 type Role string
@@ -300,25 +314,31 @@ type Store interface {
 	// overwrite a fresher one — e.g. a webhook-delivered flip.
 	SetRepoVisibility(ctx context.Context, repoID int64, visibility string, checkedAt time.Time) error
 	RepoByID(ctx context.Context, id int64) (*Repo, error)
-	RepoBySlug(ctx context.Context, slug string) (*Repo, error)
+	// RepoBySlug resolves a repo by its forge and slug. Slugs are unique
+	// per forge, not globally: github.com/acme/api and gitlab.com/acme/api
+	// are two repos.
+	RepoBySlug(ctx context.Context, forge, slug string) (*Repo, error)
 	RepoByToken(ctx context.Context, token string) (*Repo, error)
 	ListRepos(ctx context.Context) ([]*Repo, error)
-	// PublicRepoSlugs returns the slugs of repos whose report pages are
-	// effectively public (forge-reported public, "Public reports" switch
-	// on), ordered by slug and capped at limit; limit <= 0 means all.
-	// Feeds the sitemap without hydrating full rows on a crawler-facing
-	// endpoint.
-	PublicRepoSlugs(ctx context.Context, limit int) ([]string, error)
+	// PublicRepoRefs returns the forge and slug of repos whose report
+	// pages are effectively public (forge-reported public, "Public
+	// reports" switch on), ordered by forge then slug and capped at
+	// limit; limit <= 0 means all. Feeds the sitemap without hydrating
+	// full rows on a crawler-facing endpoint.
+	PublicRepoRefs(ctx context.Context, limit int) ([]RepoRef, error)
 
 	CreateWorkspace(ctx context.Context, w *Workspace) error
 	// UpdateWorkspace replaces the stored row matching w.ID with w's fields.
 	UpdateWorkspace(ctx context.Context, w *Workspace) error
-	// DeleteWorkspace removes the workspace and cascades: every repo whose
-	// slug sits under the workspace prefix is deleted too, taking its
+	// DeleteWorkspace removes the workspace and cascades: every repo on the
+	// same forge whose slug sits under the workspace prefix is deleted too, taking its
 	// uploads and coverage reports with it. Memberships cascade away with
 	// the workspace row. Nothing is touched on the forge.
 	DeleteWorkspace(ctx context.Context, id int64) error
-	WorkspaceByPrefix(ctx context.Context, prefix string) (*Workspace, error)
+	// WorkspaceByPrefix resolves a workspace by its forge and prefix.
+	// Prefixes are unique per forge, not globally: the GitHub org "acme"
+	// and the GitLab group "acme" are two tenants.
+	WorkspaceByPrefix(ctx context.Context, forge, prefix string) (*Workspace, error)
 	WorkspaceByToken(ctx context.Context, token string) (*Workspace, error)
 	ListWorkspaces(ctx context.Context) ([]*Workspace, error)
 	// RegisterWorkspace creates the workspace and makes userID its first
@@ -352,7 +372,7 @@ type Store interface {
 	// and role (M2).
 	SetUserMemberships(ctx context.Context, userID int64, memberships []Membership) error
 	// ListWorkspacesForUser returns the workspaces the user is a member of,
-	// ordered by prefix.
+	// ordered by forge, then prefix.
 	ListWorkspacesForUser(ctx context.Context, userID int64) ([]*Workspace, error)
 	// ListMembershipsForUser returns the user's memberships with their
 	// roles, ordered by workspace ID.
@@ -458,7 +478,7 @@ type CommitTx interface {
 // reached for a second to read or persist the token would deadlock the
 // pool under enough simultaneous cold-cache uploads of one workspace.
 type GrantTx interface {
-	WorkspaceByPrefix(ctx context.Context, prefix string) (*Workspace, error)
+	WorkspaceByPrefix(ctx context.Context, forge, prefix string) (*Workspace, error)
 	SetWorkspaceBitbucketGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
 	SetWorkspaceGitLabGrant(ctx context.Context, workspaceID int64, account, refreshToken string, broken bool) error
 }

@@ -140,17 +140,12 @@ func (s *Server) handleRepositoryEvent(ctx context.Context, p *webhookPayload) {
 		s.log.Debug("github repository event", "action", p.Action, "repo", p.Repository.FullName)
 		return
 	}
-	repo, err := s.store.RepoBySlug(ctx, p.Repository.FullName)
+	repo, err := s.store.RepoBySlug(ctx, "github", p.Repository.FullName)
 	if errors.Is(err, store.ErrNotFound) {
 		return // not a tracked repo
 	}
 	if err != nil {
 		s.log.Error("github webhook: repo lookup", "repo", p.Repository.FullName, "err", err)
-		return
-	}
-	// Slugs are unique across forges, so a same-named repo tracked on
-	// another forge must not be flipped by a GitHub event.
-	if repo.Forge != "github" {
 		return
 	}
 	if p.Action == "privatized" {

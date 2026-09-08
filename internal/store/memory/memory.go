@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -95,7 +94,9 @@ func (s *Store) CreateRepo(_ context.Context, r *store.Repo) error {
 	defer s.mu.Unlock()
 	// Mirror the Postgres UNIQUE constraints; autoCreateRepo's concurrent
 	// registration fallback relies on duplicate slugs failing.
-	if find(s.repos, func(x *store.Repo) bool { return x.Slug == r.Slug || x.Token == r.Token }) != nil {
+	if find(s.repos, func(x *store.Repo) bool {
+		return (x.Forge == r.Forge && x.Slug == r.Slug) || x.Token == r.Token
+	}) != nil {
 		return fmt.Errorf("memory: repo slug or token already exists")
 	}
 	s.repoSeq++
@@ -140,16 +141,29 @@ func (s *Store) UpdateRepo(_ context.Context, r *store.Repo) error {
 	return nil
 }
 
-func (s *Store) PublicRepoSlugs(_ context.Context, limit int) ([]string, error) {
+// The listing orders, matching postgres's ORDER BY forge, slug|prefix.
+func byForgeSlug(a, b *store.Repo) int {
+	return cmp.Or(cmp.Compare(a.Forge, b.Forge), cmp.Compare(a.Slug, b.Slug))
+}
+
+func byForgePrefix(a, b *store.Workspace) int {
+	return cmp.Or(cmp.Compare(a.Forge, b.Forge), cmp.Compare(a.Prefix, b.Prefix))
+}
+
+func (s *Store) PublicRepoRefs(_ context.Context, limit int) ([]store.RepoRef, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var out []string
+	var public []*store.Repo
 	for _, r := range s.repos {
 		if r.ReportsPublic() {
-			out = append(out, r.Slug)
+			public = append(public, r)
 		}
 	}
-	slices.Sort(out)
+	slices.SortFunc(public, byForgeSlug)
+	out := make([]store.RepoRef, 0, len(public))
+	for _, r := range public {
+		out = append(out, store.RepoRef{Forge: r.Forge, Slug: r.Slug})
+	}
 	return atMost(out, limit), nil
 }
 
@@ -201,10 +215,10 @@ func (s *Store) RepoByID(_ context.Context, id int64) (*store.Repo, error) {
 	return copyRepo(r), nil
 }
 
-func (s *Store) RepoBySlug(_ context.Context, slug string) (*store.Repo, error) {
+func (s *Store) RepoBySlug(_ context.Context, forge, slug string) (*store.Repo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	r := find(s.repos, func(r *store.Repo) bool { return r.Slug == slug })
+	r := find(s.repos, func(r *store.Repo) bool { return r.Forge == forge && r.Slug == slug })
 	if r == nil {
 		return nil, store.ErrNotFound
 	}
@@ -228,7 +242,7 @@ func (s *Store) ListRepos(_ context.Context) ([]*store.Repo, error) {
 	for _, r := range s.repos {
 		out = append(out, copyRepo(r))
 	}
-	slices.SortFunc(out, func(a, b *store.Repo) int { return cmp.Compare(a.Slug, b.Slug) })
+	slices.SortFunc(out, byForgeSlug)
 	return out, nil
 }
 
@@ -239,7 +253,9 @@ func (s *Store) CreateWorkspace(_ context.Context, w *store.Workspace) error {
 }
 
 func (s *Store) createWorkspaceLocked(w *store.Workspace) error {
-	if find(s.workspaces, func(x *store.Workspace) bool { return x.Prefix == w.Prefix || x.Token == w.Token }) != nil {
+	if find(s.workspaces, func(x *store.Workspace) bool {
+		return (x.Forge == w.Forge && x.Prefix == w.Prefix) || x.Token == w.Token
+	}) != nil {
 		return fmt.Errorf("memory: workspace prefix or token already exists")
 	}
 	s.wsSeq++
@@ -324,9 +340,8 @@ func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
 	}
 	// Cascade repos under the prefix along with their uploads, upload
 	// files and reports — mirroring the postgres ON DELETE CASCADE chain.
-	pfx := ws.Prefix + "/"
 	for rid, r := range s.repos {
-		if !strings.HasPrefix(r.Slug, pfx) {
+		if !ws.Owns(r) {
 			continue
 		}
 		s.deleteUploadsLocked(rid)
@@ -340,10 +355,10 @@ func (s *Store) DeleteWorkspace(_ context.Context, id int64) error {
 	return nil
 }
 
-func (s *Store) WorkspaceByPrefix(_ context.Context, prefix string) (*store.Workspace, error) {
+func (s *Store) WorkspaceByPrefix(_ context.Context, forge, prefix string) (*store.Workspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	w := find(s.workspaces, func(w *store.Workspace) bool { return w.Prefix == prefix })
+	w := find(s.workspaces, func(w *store.Workspace) bool { return w.Forge == forge && w.Prefix == prefix })
 	if w == nil {
 		return nil, store.ErrNotFound
 	}
@@ -367,7 +382,7 @@ func (s *Store) ListWorkspaces(_ context.Context) ([]*store.Workspace, error) {
 	for _, w := range s.workspaces {
 		out = append(out, new(*w))
 	}
-	slices.SortFunc(out, func(a, b *store.Workspace) int { return cmp.Compare(a.Prefix, b.Prefix) })
+	slices.SortFunc(out, byForgePrefix)
 	return out, nil
 }
 
@@ -408,7 +423,7 @@ func (s *Store) ListWorkspacesForUser(_ context.Context, userID int64) ([]*store
 			out = append(out, new(*w))
 		}
 	}
-	slices.SortFunc(out, func(a, b *store.Workspace) int { return cmp.Compare(a.Prefix, b.Prefix) })
+	slices.SortFunc(out, byForgePrefix)
 	return out, nil
 }
 

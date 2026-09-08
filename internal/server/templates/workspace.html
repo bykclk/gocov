@@ -1,6 +1,6 @@
 {{define "title"}}gocov — {{.Workspace.Prefix}} settings{{end}}
 {{define "content"}}
-{{$prefix := pathesc .Workspace.Prefix}}
+{{$ws := wsurl .Workspace ""}}
 {{$forge := .Workspace.Forge}}
 {{$ro := not .Owner}}
 <div class="ws">
@@ -10,7 +10,7 @@
     {{if eq .ReportingState "broken"}}<span class="chip fail">Reporting broken</span>{{end}}</h1>
   <p class="sub">{{.ForgeLabel}}
     {{with .RepoCount}} &middot; {{.}} repositor{{if eq . 1}}y{{else}}ies{{end}}{{end}}
-    &middot; <a href="/workspaces/{{$prefix}}/setup">Setup instructions</a></p>
+    &middot; <a href="{{$ws}}/setup">Setup instructions</a></p>
 </div>
 
 <nav class="side">
@@ -101,18 +101,18 @@
         {{if eq .ReportingState "broken"}}<a class="btn primary" href="{{.GitHubInstallURL}}">Reinstall the app</a>{{end}}
       {{end}}
     {{else}}
-      {{if eq .ReportingState "off"}}<a class="btn primary" href="/workspaces/{{$prefix}}/{{$forge}}/connect">Grant write access</a>{{end}}
-      {{if eq .ReportingState "broken"}}<a class="btn primary" href="/workspaces/{{$prefix}}/{{$forge}}/connect">Grant write access again</a>{{end}}
+      {{if eq .ReportingState "off"}}<a class="btn primary" href="{{$ws}}/connect">Grant write access</a>{{end}}
+      {{if eq .ReportingState "broken"}}<a class="btn primary" href="{{$ws}}/connect">Grant write access again</a>{{end}}
     {{end}}
     <span class="spacer"></span>
     {{if eq .ReportingState "off"}}<span class="hint">Optional — uploads work without it.</span>{{end}}
     {{if eq .ReportingState "on"}}
-      <form method="post" action="/workspaces/{{$prefix}}/{{$forge}}/disconnect"
+      <form method="post" action="{{$ws}}/disconnect"
             data-confirm="Disconnect? Statuses and comments are then skipped for this workspace.">
         <button class="btn danger" type="submit">Disconnect</button></form>
     {{end}}
     {{if eq .ReportingState "broken"}}
-      <form method="post" action="/workspaces/{{$prefix}}/{{$forge}}/disconnect"
+      <form method="post" action="{{$ws}}/disconnect"
             data-confirm="Disconnect? Statuses and comments are then skipped for this workspace.">
         <button class="btn" type="submit">Disconnect</button></form>
     {{end}}
@@ -159,7 +159,7 @@
     {{if $ro}}
     <span class="hint">Only a workspace owner can see or rotate the token.</span>
     {{else}}
-    <form method="post" action="/workspaces/{{$prefix}}/rotate-token"
+    <form method="post" action="{{$ws}}/rotate-token"
           data-confirm="Rotate the upload token? The current token stops working immediately and CI must be updated.">
       <button class="btn" type="submit">Rotate token</button></form>
     <span class="hint">The old token stops working the moment you rotate.</span>
@@ -167,7 +167,7 @@
   </div>
 </div>
 
-{{if not $ro}}<form method="post" action="/workspaces/{{$prefix}}/settings">{{end}}
+{{if not $ro}}<form method="post" action="{{$ws}}/settings">{{end}}
 <div class="card" id="gates">
   <div class="card-hd"><h2>Coverage gates</h2><span class="spacer"></span>
     <span class="chip info" id="gatecount">{{if .GateActive}}{{.GateActive}} active{{else}}None active{{end}}</span></div>
@@ -220,7 +220,7 @@
     {{if $ro}}
     <span class="hint">Only a workspace owner can delete it.</span>
     {{else}}
-    <form method="post" action="/workspaces/{{$prefix}}/delete"
+    <form method="post" action="{{$ws}}/delete"
           data-confirm="Delete {{.Workspace.Prefix}} and all of its coverage data? This cannot be undone.">
       <button class="btn danger" type="submit">Delete this workspace</button></form>
     <span class="hint">This cannot be undone.</span>

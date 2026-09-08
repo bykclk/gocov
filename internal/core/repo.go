@@ -92,7 +92,7 @@ func (p *Pipeline) RegisterRepo(ctx context.Context, ws *store.Workspace, slug s
 	}
 	if err := p.Store.CreateRepo(ctx, repo); err != nil {
 		// A concurrent first upload may have won the race; use its repo.
-		if existing, lookupErr := p.Store.RepoBySlug(ctx, slug); lookupErr == nil {
+		if existing, lookupErr := p.Store.RepoBySlug(ctx, ws.Forge, slug); lookupErr == nil {
 			return existing, nil
 		}
 		return nil, err

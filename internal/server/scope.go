@@ -6,6 +6,7 @@
 package server
 
 import (
+	"cmp"
 	"errors"
 	"maps"
 	"net/http"
@@ -25,51 +26,82 @@ func (s *Server) userScope(r *http.Request) (repoScope, error) {
 	if !s.authEnabled() {
 		return repoScope{scoped: false}, nil
 	}
-	prefixes := map[string]bool{}
+	prefixes := map[wsKey]bool{}
 	if u := currentUser(r); u != nil {
 		wss, err := s.store.ListWorkspacesForUser(r.Context(), u.ID)
 		if err != nil {
 			return repoScope{}, err
 		}
 		for _, ws := range wss {
-			prefixes[ws.Prefix] = true
+			prefixes[wsKey{ws.Forge, ws.Prefix}] = true
 		}
 	}
 	return repoScope{scoped: true, prefixes: prefixes}, nil
 }
 
-// repoScope captures which repos a request may see (M2/R3). When scoped is
-// false the instance runs in open mode (D5) and every repo is visible;
-// otherwise a repo is visible only when its workspace prefix is a member
-// prefix.
-type repoScope struct {
-	scoped   bool
-	prefixes map[string]bool
+// wsKey names a workspace the way the store does: prefix on a forge. A
+// membership in the GitHub org "acme" says nothing about the GitLab group
+// "acme". An empty forge is the operator's GOCOV_ALLOWED_WORKSPACES
+// entry, a plain name that applies on every forge.
+type wsKey struct{ forge, prefix string }
+
+// String is the key as the dashboard's ?ws= carries it, "forge/prefix";
+// GitLab prefixes contain slashes of their own, which is fine because the
+// forge is always the first segment. An operator entry is its bare name.
+func (k wsKey) String() string {
+	if k.forge == "" {
+		return k.prefix
+	}
+	return k.forge + "/" + k.prefix
 }
 
-// allows reports whether a namespaced repo slug falls within the scope.
-// Any slash-boundary prefix may carry the membership — a GitLab workspace
+// owningWorkspace picks, from the candidates, the workspace owning the
+// repo: on the repo's forge, with the most specific prefix (a project
+// below a registered GitLab subgroup belongs to the subgroup, not to a
+// same-named ancestor). Nil when none does.
+func owningWorkspace(repo *store.Repo, candidates []*store.Workspace) *store.Workspace {
+	for _, prefix := range core.SlugPrefixes(repo.Slug) { // longest first
+		for _, ws := range candidates {
+			if ws.Forge == repo.Forge && ws.Prefix == prefix {
+				return ws
+			}
+		}
+	}
+	return nil
+}
+
+// repoScope captures which repos a request may see (M2/R3). When scoped is
+// false the instance runs in open mode (D5) and every repo is visible;
+// otherwise a repo is visible only when its workspace prefix, on its
+// forge, is a member prefix.
+type repoScope struct {
+	scoped   bool
+	prefixes map[wsKey]bool
+}
+
+// allows reports whether a repo falls within the scope. Any slash-boundary
+// prefix of its slug may carry the membership — a GitLab workspace
 // registered at subgroup depth covers the projects below it.
-func (rs repoScope) allows(slug string) bool {
+func (rs repoScope) allows(repo *store.Repo) bool {
 	if !rs.scoped {
 		return true
 	}
-	for _, prefix := range core.SlugPrefixes(slug) {
-		if rs.prefixes[prefix] {
+	for _, prefix := range core.SlugPrefixes(repo.Slug) {
+		if rs.prefixes[wsKey{repo.Forge, prefix}] {
 			return true
 		}
 	}
 	return false
 }
 
-// canView reports whether the request may see the given repo slug. Callers
+// canView reports whether the request may see the given repo. Callers
 // that fail the check 404 (D3: a non-member must not learn a repo exists).
-func (s *Server) canView(r *http.Request, slug string) (bool, error) {
+func (s *Server) canView(r *http.Request, repo *store.Repo) (bool, error) {
 	scope, err := s.userScope(r)
 	if err != nil {
 		return false, err
 	}
-	return scope.allows(slug), nil
+	return scope.allows(repo), nil
 }
 
 // authorizeReport decides whether the request may see a repo's report
@@ -87,7 +119,7 @@ func (s *Server) canView(r *http.Request, slug string) (bool, error) {
 // settings button, which a signed-in stranger on a public repo must not
 // see either.
 func (s *Server) authorizeReport(w http.ResponseWriter, r *http.Request, repo *store.Repo) (member, ok bool) {
-	allowed, err := s.canView(r, repo.Slug)
+	allowed, err := s.canView(r, repo)
 	if err != nil {
 		s.internalError(w, "checking access", err)
 		return false, false
@@ -170,14 +202,16 @@ func (s *Server) publicView(r *http.Request) bool {
 }
 
 // allowedWorkspaceSet is the D3 authorization rule: the operator's explicit
-// GOCOV_ALLOWED_WORKSPACES list when set, otherwise the workspaces this
-// instance tracks (registered workspace prefixes plus the workspace part
-// of every registered repo slug).
-func (s *Server) allowedWorkspaceSet(r *http.Request) (map[string]bool, error) {
-	set := map[string]bool{}
+// GOCOV_ALLOWED_WORKSPACES list when set (plain names, forge ""), otherwise
+// the workspaces this instance tracks — registered workspace prefixes plus
+// the workspace part of every registered repo slug, each on its forge.
+// Names are scoped per forge, so a tracked GitHub org "acme" admits nobody
+// from the Bitbucket workspace "acme".
+func (s *Server) allowedWorkspaceSet(r *http.Request) (map[wsKey]bool, error) {
+	set := map[wsKey]bool{}
 	if len(s.allowedWorkspaces) > 0 {
 		for _, ws := range s.allowedWorkspaces {
-			set[ws] = true
+			set[wsKey{"", ws}] = true
 		}
 		return set, nil
 	}
@@ -186,7 +220,7 @@ func (s *Server) allowedWorkspaceSet(r *http.Request) (map[string]bool, error) {
 		return nil, err
 	}
 	for _, ws := range workspaces {
-		set[ws.Prefix] = true
+		set[wsKey{ws.Forge, ws.Prefix}] = true
 	}
 	repos, err := s.store.ListRepos(r.Context())
 	if err != nil {
@@ -194,22 +228,50 @@ func (s *Server) allowedWorkspaceSet(r *http.Request) (map[string]bool, error) {
 	}
 	for _, repo := range repos {
 		for _, prefix := range core.SlugPrefixes(repo.Slug) {
-			set[prefix] = true
+			set[wsKey{repo.Forge, prefix}] = true
 		}
 	}
 	return set, nil
 }
 
+// admits reports whether the allow-set lets an account on the forge in
+// through membership of the named workspace: tracked on that forge, or
+// listed by the operator for every forge.
+func admits(allowed map[wsKey]bool, forge, name string) bool {
+	return allowed[wsKey{forge, name}] || allowed[wsKey{"", name}]
+}
+
+// trackedWorkspace is one entry of the login page's "tracked workspaces"
+// line: the name, and the forge it is tracked on so a member of the
+// same-named workspace elsewhere can see why they were turned away.
+// Forge is the forge's label, empty for an operator-listed name.
+type trackedWorkspace struct {
+	Name  string
+	Forge string
+}
+
 // trackedWorkspaces renders the allowed set for the login page, so it is
 // obvious whose coverage an instance holds.
-func (s *Server) trackedWorkspaces(r *http.Request) []string {
+func (s *Server) trackedWorkspaces(r *http.Request) []trackedWorkspace {
 	set, err := s.allowedWorkspaceSet(r)
 	if err != nil {
 		return nil
 	}
-	return sortedKeys(set)
+	out := make([]trackedWorkspace, 0, len(set))
+	for _, k := range sortedKeys(set) {
+		tw := trackedWorkspace{Name: k.prefix}
+		if k.forge != "" {
+			tw.Forge = providerLabel(k.forge)
+		}
+		out = append(out, tw)
+	}
+	return out
 }
 
-func sortedKeys(set map[string]bool) []string {
-	return slices.Sorted(maps.Keys(set))
+// sortedKeys orders an allow-set by forge, then name — the store's own
+// listing order.
+func sortedKeys(set map[wsKey]bool) []wsKey {
+	return slices.SortedFunc(maps.Keys(set), func(a, b wsKey) int {
+		return cmp.Or(cmp.Compare(a.forge, b.forge), cmp.Compare(a.prefix, b.prefix))
+	})
 }
