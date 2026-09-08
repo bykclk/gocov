@@ -201,7 +201,9 @@ jobs:
         run: |
           set -euo pipefail
           # The evaluation stack is done; free its Postgres and port first.
-          docker compose -f ../docker-compose.yml -f ../.github/compose-smoke.yml down -v
+          # The overlay requires GOCOV_VERSION even to tear down, since
+          # compose interpolates the files before it looks at the project.
+          GOCOV_VERSION=$TAG docker compose -f ../docker-compose.yml -f ../.github/compose-smoke.yml down -v
           # .env.example with the four required values filled in and the
           # bundled Postgres turned on, the way the docs say to.
           sed -e "s/^GOCOV_VERSION=.*/GOCOV_VERSION=$TAG/" \
