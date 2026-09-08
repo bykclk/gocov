@@ -540,6 +540,108 @@ func TestSetupPageGitLabSnippet(t *testing.T) {
 	}
 }
 
+// A connected workspace's setup page leads with an OIDC identity token
+// instead of the upload token: the GitHub snippet grants id-token: write
+// and passes no token, and the token itself is folded away underneath,
+// still reachable for owners.
+func TestSetupPageTokenlessGitHub(t *testing.T) {
+	st := storemem.New()
+	if err := st.CreateWorkspace(t.Context(), &store.Workspace{
+		Forge: "github", Prefix: "myorg", Token: "gh-secret", DefaultBranch: "main",
+		GitHubInstallationID: 4242}); err != nil {
+		t.Fatal(err)
+	}
+	gh := &fakeProvider{name: "github", identity: &auth.Identity{
+		ForgeUUID: "42", DisplayName: "Hub Dev", Workspaces: []string{"myorg"}, OwnedWorkspaces: []string{"myorg"},
+	}}
+	f := &fixture{
+		srv: New(Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			BaseURL: "https://gocov.example",
+			Auths:   []auth.Provider{gh},
+		}),
+		store: st,
+	}
+	sess := signInVia(t, f, "github")
+
+	body := get(f, "/workspaces/myorg/setup", sess).Body.String()
+	for _, want := range []string{
+		"id-token: write",
+		"gocov/gocov-action@v1",
+		"${{ vars.GOCOV_SERVER }}",
+		"Nothing to paste",
+		`<details class="alt">`,
+		`data-full="gh-secret"`,
+		`data-ph-click="show_token_clicked"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("tokenless github setup page misses %q:\n%s", want, body)
+		}
+	}
+	// The folded token section still says how a token would be passed; the
+	// snippet itself must not.
+	if sn := snippetOf(body); strings.Contains(sn, "GOCOV_TOKEN") {
+		t.Errorf("tokenless github snippet should not pass a token:\n%s", sn)
+	}
+}
+
+// snippetOf returns the copyable CI snippet on a setup page.
+func snippetOf(body string) string {
+	_, rest, ok := strings.Cut(body, `<code id="snippet">`)
+	if !ok {
+		return ""
+	}
+	sn, _, _ := strings.Cut(rest, "</code>")
+	return sn
+}
+
+// Same on Bitbucket: the step names the server under oidc.audiences and
+// the pipe gets no TOKEN.
+func TestSetupPageTokenlessBitbucket(t *testing.T) {
+	st := storemem.New()
+	if err := st.CreateWorkspace(t.Context(), &store.Workspace{
+		Forge: "bitbucket", Prefix: "acme", Token: "ws-secret", DefaultBranch: "main",
+		BitbucketGrantAccount: "gocov-bot", BitbucketRefreshToken: "rt"}); err != nil {
+		t.Fatal(err)
+	}
+	bb := &fakeProvider{name: "bitbucket", identity: &auth.Identity{
+		ForgeUUID: "1", DisplayName: "Dev", Workspaces: []string{"acme"},
+	}}
+	f := &fixture{
+		srv: New(Config{
+			Store:   st,
+			Blobs:   blobmem.New(),
+			Parsers: map[string]profile.Parser{"go": profile.GoParser{}},
+			BaseURL: hosted.DefaultServer,
+			Auths:   []auth.Provider{bb},
+		}),
+		store: st,
+	}
+	sess := signInVia(t, f, "bitbucket")
+
+	body := get(f, "/workspaces/acme/setup", sess).Body.String()
+	for _, want := range []string{
+		"oidc:",
+		"- " + hosted.DefaultServer,
+		"pipe: docker://gocov/upload-pipe:",
+		"FILES: coverage.out",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("tokenless bitbucket setup page misses %q:\n%s", want, body)
+		}
+	}
+	if sn := snippetOf(body); strings.Contains(sn, "GOCOV_TOKEN") {
+		t.Errorf("tokenless bitbucket snippet should not pass a token:\n%s", sn)
+	}
+	// A member (not an owner) still sees where the token would go, but no
+	// token value.
+	if strings.Contains(body, `data-full="ws-secret"`) || !strings.Contains(body, "Shown to workspace owners only") {
+		t.Errorf("member should not see the token value:\n%s", body)
+	}
+}
+
 // A self-managed GitLab cannot include components from gitlab.com's
 // catalog, so its wizard keeps the raw download recipe with the checksum
 // line. The server knows which GitLab it faces from the trusted OIDC

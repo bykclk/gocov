@@ -39,7 +39,7 @@ type railStep struct {
 // Labels are identical across forges; only the Workspace subline differs.
 func onboardingRail(active int, forge, prefix string, hasRepos bool) []railStep {
 	labels := [3]string{"Workspace", "Wire up CI", "First upload"}
-	sub := [3]string{"Chosen here", "Token and upload step", "Push a commit"}
+	sub := [3]string{"Chosen here", "The upload step", "Push a commit"}
 	if forge == "github" {
 		// On GitHub the org (and so the workspace) is chosen on GitHub's
 		// own install screen, not here.
@@ -240,6 +240,11 @@ func (s *Server) setupViewData(r *http.Request, ws *store.Workspace, owner bool)
 		"Owner":         owner,
 		"Token":         "",
 		"TokenMasked":   "",
+		// Tokenless: the CI snippet leads with an OIDC identity token
+		// instead of GOCOV_TOKEN. The server only accepts those for a
+		// workspace it can verify through its forge connection, which is
+		// exactly what the previous step's Connect established.
+		"Tokenless": oidcReady(ws),
 	}
 	if owner {
 		data["Token"] = ws.Token
@@ -254,6 +259,22 @@ func (s *Server) setupViewData(r *http.Request, ws *store.Workspace, owner bool)
 		data["ReportsPosted"] = reportsPostedMsg(ws)
 	}
 	return data, nil
+}
+
+// oidcReady reports whether uploads from the workspace's repos can
+// authenticate with a forge-minted OIDC identity token instead of the
+// upload token: the workspace has to be connected to its forge, since that
+// connection is what the server verifies the token's repository against.
+func oidcReady(ws *store.Workspace) bool {
+	switch ws.Forge {
+	case "github":
+		return ws.GitHubInstallationID != 0
+	case "bitbucket":
+		return ws.BitbucketGrantAccount != ""
+	case "gitlab":
+		return ws.GitLabGrantAccount != ""
+	}
+	return false
 }
 
 // firstReportView is the compact first-upload summary shown on the last
