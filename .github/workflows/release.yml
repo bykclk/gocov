@@ -30,6 +30,12 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      # Build provenance: the attestation is signed with the job's OIDC
+      # identity and stored against the repo.
+      id-token: write
+      attestations: write
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -57,6 +63,16 @@ jobs:
               -o "dist/gocov-server-$os-$arch$ext" ./cmd/gocov-server
           done
           (cd dist && sha256sum * > checksums.txt)
+
+      # SLSA build provenance for every asset, checksums.txt included: it
+      # records which commit of this workflow built each file, so a
+      # download can be checked against the repo rather than against a
+      # checksum that travelled with it:
+      #
+      #   gh attestation verify gocov-linux-amd64 --repo gocov/gocov
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/*
 
       - name: Publish
         env:
@@ -99,6 +115,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     env:
       # inputs.tag is empty unless this workflow was called with one; the
       # fallback keeps the hand-pushed-tag path working.
@@ -122,6 +140,7 @@ jobs:
           minor=${TAG#v}; minor=${minor%.*}
           echo "minor=$minor" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
+        id: push
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -131,6 +150,16 @@ jobs:
             ghcr.io/gocov/gocov-server:${{ env.TAG }}
             ghcr.io/gocov/gocov-server:${{ steps.tags.outputs.minor }}
             ghcr.io/gocov/gocov-server:latest
+      # The same provenance for the image, attached to the manifest digest
+      # (which all three tags share) and pushed to GHCR next to it, so a
+      # self-hoster can check what they are about to run:
+      #
+      #   gh attestation verify oci://ghcr.io/gocov/gocov-server:vX.Y.Z --repo gocov/gocov
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ghcr.io/gocov/gocov-server
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
 
   # The self-host path, exercised on every release with the image just
   # pushed: the root compose file (Postgres + server, the way a self-hoster

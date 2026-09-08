@@ -32,6 +32,14 @@ The root `docker-compose.yml` builds from the repo instead, because the evaluati
 changed". If you would rather run the binary under systemd, every release ships `gocov-server` for linux, darwin and
 windows on amd64 and arm64, with `checksums.txt` alongside.
 
+Both the image and the binaries carry a signed build provenance attestation, so you can check what you are about to
+run was built by this repository's release workflow from the tagged commit:
+
+```sh
+gh attestation verify oci://ghcr.io/gocov/gocov-server:vX.Y.Z --repo gocov/gocov
+gh attestation verify gocov-server-linux-amd64 --repo gocov/gocov
+```
+
 All of it is AGPL-3.0. The server contacts nothing but your database and the forge APIs — no telemetry, no license
 check, no call home — so a running deployment depends on this project only for the next version you choose to run.
 The web UI loads nothing off-site either, unless you opt in: setting `GOCOV_POSTHOG_KEY` adds PostHog's browser

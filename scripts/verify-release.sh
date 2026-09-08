@@ -32,6 +32,10 @@ PIPE_REPO=gocov/upload-pipe
 PIPE_IMAGE=gocov/upload-pipe
 PIPE_BITBUCKET=gocov/upload-pipe
 SERVER_IMAGE=gocov/gocov-server
+# The first release whose workflow attested its assets and image. Older
+# tags legitimately have no provenance, so the check is skipped for them
+# rather than failing a scheduled run that verifies an older release.
+FIRST_ATTESTED=v0.24.0
 
 pass=0 fail=0 skipped=0
 
@@ -99,6 +103,22 @@ else
       bad "checksums.txt does not cover every binary" "missing:$unsummed"
     else
       ok "checksums.txt covers every binary"
+    fi
+
+    # Build provenance: checksums.txt is attested along with every binary,
+    # and it is the one file the action and the pipe trust at install
+    # time, so verifying it here covers the download path they take.
+    if [ "$(printf '%s\n%s\n' "$FIRST_ATTESTED" "$tag" | sort -V | head -1)" != "$FIRST_ATTESTED" ]; then
+      skip "did not check build provenance" "releases before $FIRST_ATTESTED were not attested"
+    else
+      tmp=$(mktemp -d); printf '%s\n' "$sums" >"$tmp/checksums.txt"
+      if gh attestation verify "$tmp/checksums.txt" --repo "$CLI_REPO" >/dev/null 2>&1; then
+        ok "checksums.txt carries build provenance from $CLI_REPO"
+      else
+        bad "checksums.txt has no valid build provenance from $CLI_REPO" \
+          "the release job's attest step did not run, or attested something else"
+      fi
+      rm -rf "$tmp"
     fi
   fi
 fi
@@ -264,6 +284,17 @@ else
   else
     bad ":$tag is not published for both architectures" "found: ${arches:-nothing}" \
       "production (arm64) and most self-hosters (amd64) pull this by exact version"
+  fi
+
+  # The image's provenance lives in the registry next to the manifest;
+  # gh resolves the tag to its digest and looks it up there.
+  if [ "$(printf '%s\n%s\n' "$FIRST_ATTESTED" "$tag" | sort -V | head -1)" != "$FIRST_ATTESTED" ]; then
+    skip "did not check the image's build provenance" "releases before $FIRST_ATTESTED were not attested"
+  elif gh attestation verify "oci://ghcr.io/$SERVER_IMAGE:$tag" --repo "$CLI_REPO" >/dev/null 2>&1; then
+    ok "ghcr.io/$SERVER_IMAGE:$tag carries build provenance from $CLI_REPO"
+  else
+    bad "ghcr.io/$SERVER_IMAGE:$tag has no valid build provenance from $CLI_REPO" \
+      "the image job's attest step did not run, or was not pushed to the registry"
   fi
 fi
 
