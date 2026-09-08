@@ -20,7 +20,7 @@ operational version of it. Read it if anything below disagrees with the repo.
 ## The shape of a release
 
 One release lands in four repositories and is, in the end, **four PR merges plus two
-approval clicks**:
+approval clicks** (the release PR's CI run, and the production deploy):
 
 1. `gocov` — a `Release-As:` PR states the version; release-please opens the real release
    PR; merging it tags `vX.Y.Z` and the tag build publishes binaries, the GHCR image, and
@@ -97,23 +97,27 @@ gh pr list --search "release" --limit 5
 gh pr diff <N>          # review the pins and the CHANGELOG with the user
 ```
 
+The PR's own `ci.yml` run sits behind **"Approve and run"** on the PR page — the bot never
+graduates out of `first_time_contributors`, so it asks every release, and the ruleset's
+required checks block the merge until that run has been approved and is green (`gh pr checks
+<N>` shows them pending until then). That click is the user's; point it out before the merge.
+
 Until this is merged nothing is tagged — a wrong version is a PR comment, not a burnt tag.
 User merges it.
 
-## Step 3 — The tag build, and the two approvals
+## Step 3 — The tag build, and the deploy approval
 
 Merging tags `v<VERSION>` and, because a GITHUB_TOKEN tag cannot trigger a workflow,
-release-please *calls* `release.yml` directly. Watch it:
+release-please *calls* `release.yml` directly. The push to main is the user's merge, so no
+"Approve and run" here. Watch it:
 
 ```sh
 gh run list --limit 5
 gh run watch <run-id>
 ```
 
-Two human gates in this run, both the user's click:
+One human gate in this run, the user's click:
 
-- **"Approve and run"** on the bot's workflow run — the bot never graduates out of
-  `first_time_contributors`, so it asks every release.
 - **production deploy** — the `production` environment's required reviewer. Approve when
   the image job is done; the deploy pulls the image, rolls app.gocov.dev, and smoke-tests
   `/healthz` plus a real upload from `gocov/smoke`.
