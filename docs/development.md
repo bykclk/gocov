@@ -51,9 +51,10 @@ model. GitHub and GitLab were each added this way — new formats or S3 storage 
 
 ## Releasing
 
-A gocov release lands in three repositories. The CLI is tagged here, which builds the binaries and publishes the
-release; [gocov-action](https://github.com/gocov/gocov-action) pins the CLI version its users download; and
-[upload-pipe](https://github.com/gocov/upload-pipe) bakes the same version into the Bitbucket pipe image.
+A gocov release lands in four repositories. The CLI is tagged here, which builds the binaries and publishes the
+release; [gocov-action](https://github.com/gocov/gocov-action) pins the CLI version its users download;
+[upload-pipe](https://github.com/gocov/upload-pipe) bakes the same version into the Bitbucket pipe image; and
+[gitlab-component](https://github.com/gocov/gitlab-component) pins it in the GitLab CI/CD Catalog component.
 
 ### Cutting one
 
