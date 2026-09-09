@@ -254,7 +254,7 @@ workflow:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 test:
-  image: golang:1.23
+  image: golang:1.27
   script:
     - go test ./... -covermode=atomic -coverprofile=coverage.out
   artifacts:
@@ -273,7 +273,7 @@ test:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 coverage:
-  image: golang:1.23{{if .Tokenless}}
+  image: golang:1.27{{if .Tokenless}}
   id_tokens:
     GOCOV_ID_TOKEN:
       aud: {{.BaseURL}}{{end}}
@@ -292,7 +292,7 @@ coverage:
     twice:{{else}}Then add the step to <code>bitbucket-pipelines.yml</code> &mdash;
     <code>branches</code> and <code>pull-requests</code> share one step so a PR build runs
     once, not twice:{{end}}</p>
-    <pre><code id="snippet">image: golang:1.23
+    <pre><code id="snippet">image: golang:1.27
 
 definitions:
   steps:
