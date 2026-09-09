@@ -20,7 +20,7 @@ workflow:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 test:
-  image: golang:1.23
+  image: golang:1.27
   script:
     - go test ./... -covermode=atomic -coverprofile=coverage.out
   artifacts:
@@ -63,7 +63,7 @@ your gocov server's URL (`https://app.gocov.dev` on the hosted service, your ins
 
 ```yaml
 coverage:
-  image: golang:1.23
+  image: golang:1.27
   id_tokens:
     GOCOV_ID_TOKEN:
       aud: https://app.gocov.dev   # your gocov server URL
@@ -89,7 +89,7 @@ workflow:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 coverage:
-  image: golang:1.23
+  image: golang:1.27
   script:
     - go test ./... -covermode=atomic -coverprofile=coverage.out
     - curl -fsSLO https://github.com/gocov/gocov/releases/download/v0.25.0/gocov-linux-amd64
